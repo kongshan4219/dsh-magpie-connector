@@ -32,10 +32,12 @@
 ### 安装
 
 ```sh
-dsh plugin --profile web add dsh-magpie-connector
+dsh plugin --profile web add @ks/dsh-magpie-connector
 ```
 
 重启 DSH 并刷新页面。在 [ohmydsh](https://github.com/prgrmrwy/ohmydsh) 中也可以直接启用 local `dsh-magpie-connector` manifest 条目后重新构建。已验证 DSH `0.2.0-rc.2`、Web UI、Node.js `>=22.19`。
+
+从上游 `dsh-magpie-connector` 切换时，请先移除上游包。两个包沿用相同的插件 ID、设置目录和凭据引用。
 
 > **0.3.0 BREAKING 升级**：旧的单一 route `dsh-magpie-connector` 已退役。保存在它上面的会话与默认模型不再可用，请在 `Magpie (…)` 分组中重选模型。其它依赖精确 route id 的配置（例如子任务路由、出口豁免列表）需改成新的 `dsh-magpie-connector-<owner>`。
 
@@ -70,13 +72,15 @@ dsh plugin --profile web add dsh-magpie-connector
 
 ### 需要知道的行为
 
+使用 Magpie 模型时，DSH 可通过 `magpie_web_search` 调用网关的网页搜索，并获得带来源链接的结果。需要 DSH 宿主支持按模型启用工具，以及 Magpie 已配置可用的搜索服务。自建反代需转发所用线路的 `POST /mcp/magpie/web-search`。若 gateway key 限制了 MCP 工具，需允许 `magpie-web-search` 下的 `web_search`。
+
 - **失败交给 DSH 重试，插件不重放请求。** 适配器声明与 `dsh-plugin-subscriptions` 相同的 `llm-retry` 策略（最多 10 次，1 秒起指数退避至 60 秒，±20% 抖动，429 时遵守 `Retry-After`）。`TIMEOUT`、`TRANSPORT`、`SERVER`、`RATE_LIMIT`、`EMPTY_RESPONSE` 会重试；401/403、额度用尽、上下文超限与其它 4xx 不重试。
 - **默认输出预算为上下文压缩预留空间。** 网关的 `max_output_tokens` 是模型能力上限，不直接作为每次请求的默认预算。交给 DSH 的默认预算是 `min(能力上限, max(1, 窗口/4, 窗口/2 − 65536))`，给 DSH 的上下文压缩留出空间；显式设置的 `maxTokens` 不受影响。上下文窗口小于 104,026 token 的模型仍按同一公式计算，但不保证通过 DSH 的压缩检查。
 - **只有持续静默才会结束流。** 响应头、SSE 事件和心跳都算有数据；连续 300 秒没有任何数据才以 `TIMEOUT` 结束（消息含 `MAGPIE_STREAM_TIMEOUT`）。只要网关还在发心跳，长时间推理不会被截断。
 - **自动选线不会重放请求。** 每次操作开始前按序号做 TCP 可达探测并选线路；连接阶段失败只使该线路缓存失效、本次操作失败，下一次操作重新选择。生成请求从不被插件换线或重放，其它失败交给 DSH 重试策略。
 - **切换线路与编辑线路语义不同。** 自动切换保留模型目录（不闪断）、清空用量卡片并以新线路重同步；编辑生效线路的地址/key/接入方式才会按换代清空目录；编辑非生效线路不影响当前目录。
 - **更改连接不会中止正在进行的生成。** 新地址或新 key 会立即隐藏旧目录与旧卡片，但已 prepare 或正在运行的生成会用捕获到的旧地址与 key 跑完。用户取消与插件卸载仍会中止它们。
-- **传输边界刻意收窄。** host 请求经私有 `undici` dispatcher 直连配置的网关，不经过全局代理 dispatcher；拒绝重定向；只允许 `GET /models`、`POST /responses`、`POST /chat/completions`、`GET /magpie/quotas/cards`、`POST /magpie/quotas/refresh`；从不调用 Magpie GUI 的 `/api/*` 管理接口。厂商出站代理在 Magpie 侧配置。
+- **网关传输。** Host 使用私有 `undici` dispatcher，并拒绝重定向。模型请求经过宿主 `fetch` 中间件。允许访问模型目录、对话生成、额度读取与刷新、Codex 重置，以及固定搜索 MCP 端点的 `web_search` 调用。厂商出站代理在 Magpie 侧配置。
 - **不支持：** 非空 `stop` 序列会在发请求前失败（`MAGPIE_STOP_UNSUPPORTED`），因为 Magpie 无法在所有上游协议转换中保留 stop。用量卡片本身只读；使用 Codex 重置卡是本插件唯一会写 Magpie 账号状态的操作——必须手动触发、两段确认、只用最早到期的那张，且从不调用账号管理端点。
 - **密钥不会进入响应或日志。** 网关反射的文本在进入设置接口或日志之前会用当前 key 脱敏。写盘文件权限 `0600`；设置接口只报告 `configured` / `writable`。
 - **界面跟随 DSH 语言。** 0.5.0 起设置页与速度菜单带中英文字典，按当前 DSH 界面语言渲染（`ctx.locale`）；0.5.0 之前文案只有中文。宿主没有 locale 服务（或单测环境）时回退到中文参考集，已保存设置与行为不受影响。
@@ -102,7 +106,7 @@ npm run build
 <!-- section: removal -->
 
 ```sh
-dsh plugin --profile web remove dsh-magpie-connector
+dsh plugin --profile web remove @ks/dsh-magpie-connector
 ```
 
 重启 DSH 并刷新页面。dispose 只释放注册、计时器与连接，不删除凭据和设置。需要彻底清理时，通过 DSH credentials 管理删除各线路的 `MAGPIE_LINE_<ID>_*` 凭据（以及升级前遗留的 `MAGPIE_API_KEY` / `MAGPIE_ACCESS_*`），并在确认安装版本的数据目录后删除插件设置文件。如果其它集成仍在使用某个凭据，不要删除。
@@ -111,7 +115,7 @@ dsh plugin --profile web remove dsh-magpie-connector
 
 ## 来源、许可与参与
 
-本插件在 [ohmydsh](https://github.com/prgrmrwy/ohmydsh)（`packages/dsh-magpie-connector`）中持续开发，[本仓库](https://github.com/prgrmrwy/dsh-magpie-connector)是发布镜像，自动发布到 [npm](https://www.npmjs.com/package/dsh-magpie-connector) 与 [GitHub Releases](https://github.com/prgrmrwy/dsh-magpie-connector/releases)。当前行为见规范 [`openspec/specs/dsh-magpie-connector`](https://github.com/prgrmrwy/ohmydsh/blob/main/openspec/specs/dsh-magpie-connector/spec.md)。
+[本仓库](https://github.com/kongshan4219/dsh-magpie-connector)是 [prgrmrwy/dsh-magpie-connector](https://github.com/prgrmrwy/dsh-magpie-connector) 的 fork，上游在 [ohmydsh](https://github.com/prgrmrwy/ohmydsh/tree/main/packages/dsh-magpie-connector) 开发。本 fork 先发布到 [npm](https://www.npmjs.com/package/@ks/dsh-magpie-connector)，再把同一份安装包挂到 [GitHub Releases](https://github.com/kongshan4219/dsh-magpie-connector/releases)。
 
 采用 [MIT](LICENSE) 许可。`@earendil-works/pi-ai` 与 `undici` 是分别以 MIT 许可分发的依赖；鸟形图标来源与许可见 [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES)。欢迎到 [prgrmrwy/dsh-magpie-connector](https://github.com/prgrmrwy/dsh-magpie-connector/issues) 提 issue 和 PR；使用问题与配置经验欢迎发到 [Discussions](https://github.com/prgrmrwy/dsh-magpie-connector/discussions)。
 

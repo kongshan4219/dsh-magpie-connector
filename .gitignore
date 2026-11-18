@@ -1,0 +1,9 @@
+node_modules/
+lib/
+*.tgz
+.cache/
+.test-home/
+.env
+*.local.json
+npm-install.log
+npm-test.log

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0 — 2026-11-18
+
+- 新增 `magpie_web_search`。使用 Magpie 模型时，DSH 可以通过当前线路调用 Magpie 的网页搜索，并获得带来源链接的结果。
+- Fork 通过 npm 包 `@ks/dsh-magpie-connector` 分发。沿用现有插件 ID、模型路由、线路设置和凭据引用。
+
 ## 0.6.12 — 2026-11-11
 
 - **修复模型请求绕过宿主全局 fetch 上下文处理的问题（prgrmrwy/dsh-magpie-connector#7）。** `POST /responses` 和 `POST /chat/completions` 在发送时读取全局 `fetch`，使 billion-context 等宿主中间件能够处理模型请求；目录、额度与重置等管理请求仍直接调用 undici。保留专用 dispatcher、连接超时、认证与归属 headers、禁止重定向、取消信号和错误分类。

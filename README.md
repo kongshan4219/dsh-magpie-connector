@@ -34,10 +34,12 @@ English · [简体中文](README.zh.md)
 ### Install
 
 ```sh
-dsh plugin --profile web add dsh-magpie-connector
+dsh plugin --profile web add @ks/dsh-magpie-connector
 ```
 
 Restart DSH and refresh the Web page. Inside [ohmydsh](https://github.com/prgrmrwy/ohmydsh) you can instead enable the local `dsh-magpie-connector` manifest entry and rebuild. Tested with DSH `0.2.0-rc.2`, Web UI, Node.js `>=22.19`.
+
+When switching from the upstream `dsh-magpie-connector` package, remove that package first. Both packages use the same plugin ID, settings directory, and credential references.
 
 > **0.3.0 BREAKING upgrade**: the single `dsh-magpie-connector` route is retired. Sessions and the default model saved on it no longer resolve; pick the model again from a `Magpie (…)` group. Routes that depend on the exact route id elsewhere (e.g. subagent routing, egress allowlists) must list the new `dsh-magpie-connector-<owner>` ids.
 
@@ -76,7 +78,8 @@ Need another method — custom headers, mTLS, another zero-trust gateway? **Issu
 - **The default output budget reserves room for compaction.** The gateway's `max_output_tokens` is the model's capacity, not the per-request default. The default budget handed to DSH is `min(capacity, max(1, window/4, window/2 − 65536))`, leaving context space for DSH compaction; an explicit `maxTokens` is unaffected. Models with a window below 104,026 tokens follow the same formula but are not guaranteed to pass DSH's compaction checks.
 - **Only silence ends a stream.** Headers, SSE events and heartbeats all count as liveness; 300 seconds without any data ends the request with `TIMEOUT` (message contains `MAGPIE_STREAM_TIMEOUT`). Long reasoning survives as long as the gateway keeps the stream alive.
 - **Connection changes do not abort work.** A new address or key immediately hides the old catalog and cards, but generations already prepared or running finish with their captured address and key. User cancellation and plugin disposal still stop them.
-- **The transport is deliberately narrow.** Host requests go through a private `undici` dispatcher straight to the configured gateway, never through a global proxy dispatcher. Redirects are rejected; only `GET /models`, `POST /responses`, `POST /chat/completions`, `GET /magpie/quotas/cards` and `POST /magpie/quotas/refresh` are allowed; Magpie GUI `/api/*` management endpoints are never called. Provider egress proxies belong in Magpie.
+- **Magpie web search.** With a Magpie model selected, DSH can call `magpie_web_search` and receive results with source links. This requires a DSH host with per-model tool activation and a working search source in Magpie. Reverse proxies must forward `POST /mcp/magpie/web-search` for the configured gateway line. An MCP-restricted gateway key must allow `web_search` on `magpie-web-search`.
+- **Gateway transport.** Host requests use a private `undici` dispatcher and reject redirects. Model requests pass through the host's `fetch` middleware. The plugin uses the model catalog, conversation, quota, Codex reset, and fixed MCP web-search endpoints. Configure provider egress proxies in Magpie.
 - **Not supported:** `stop` sequences fail before any network access (`MAGPIE_STOP_UNSUPPORTED`) because Magpie cannot preserve them across every upstream translation. Usage cards are read-only. Spending a Codex reset is the plugin's only write to a Magpie account: it is manual, two-step, limited to the credit that expires first, and it never touches account-management endpoints.
 - **Secrets stay out of responses and logs.** Gateway-reflected text is redacted with the current key before it can reach the settings API or logs. Files are written `0600`; the settings API reports only `configured` / `writable`.
 - **The interface follows the DSH UI language.** Since 0.5.0 the settings page and the speed menu ship English and Chinese dictionaries and render in the active DSH language (`ctx.locale`); before 0.5.0 the copy was Chinese-only. A host without a locale service (or a unit test) falls back to the Chinese reference set, so stored settings and behaviour are untouched.
@@ -102,7 +105,7 @@ Inside the ohmydsh monorepo, install once at the root and add `--workspace=dsh-m
 <!-- section: removal -->
 
 ```sh
-dsh plugin --profile web remove dsh-magpie-connector
+dsh plugin --profile web remove @ks/dsh-magpie-connector
 ```
 
 Restart DSH and refresh the page. Disposal releases registrations, timers and connections; it does not remove credentials or settings. To erase data, delete each line's `MAGPIE_LINE_<ID>_*` refs (plus any pre-0.2.0 `MAGPIE_API_KEY` / `MAGPIE_ACCESS_*` leftovers) through DSH credentials management and remove the plugin settings file after locating it from the installed plugin's data directory. Do not remove a credential if another integration still uses it.
@@ -111,7 +114,7 @@ Inside [ohmydsh](https://github.com/prgrmrwy/ohmydsh), set the manifest entry to
 
 ## Source, license and contributing
 
-This plugin is developed in [ohmydsh](https://github.com/prgrmrwy/ohmydsh) (`packages/dsh-magpie-connector`); [this repository](https://github.com/prgrmrwy/dsh-magpie-connector) is its release mirror, published automatically to [npm](https://www.npmjs.com/package/dsh-magpie-connector) and [GitHub Releases](https://github.com/prgrmrwy/dsh-magpie-connector/releases). Current behavior is specified in [`openspec/specs/dsh-magpie-connector`](https://github.com/prgrmrwy/ohmydsh/blob/main/openspec/specs/dsh-magpie-connector/spec.md).
+This is the [kongshan4219 fork](https://github.com/kongshan4219/dsh-magpie-connector) of [prgrmrwy/dsh-magpie-connector](https://github.com/prgrmrwy/dsh-magpie-connector), which is developed in [ohmydsh](https://github.com/prgrmrwy/ohmydsh/tree/main/packages/dsh-magpie-connector). The fork publishes its package to [npm](https://www.npmjs.com/package/@ks/dsh-magpie-connector) and attaches the same npm tarball to its [GitHub Releases](https://github.com/kongshan4219/dsh-magpie-connector/releases).
 
 [MIT](LICENSE). `@earendil-works/pi-ai` and `undici` are separate MIT-licensed dependencies; the bird artwork follows the notice in [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES). Issues and pull requests are welcome at [prgrmrwy/dsh-magpie-connector](https://github.com/prgrmrwy/dsh-magpie-connector/issues); questions and setup tips go to [Discussions](https://github.com/prgrmrwy/dsh-magpie-connector/discussions).
 
