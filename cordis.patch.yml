@@ -1,3 +1,3 @@
 - insert:
     - id: dsh-magpie-connector
-      name: "@ks/dsh-magpie-connector"
+      name: "@kongseek/dsh-magpie-connector"

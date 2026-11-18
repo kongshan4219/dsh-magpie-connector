@@ -34,7 +34,7 @@ English · [简体中文](README.zh.md)
 ### Install
 
 ```sh
-dsh plugin --profile web add @ks/dsh-magpie-connector
+dsh plugin --profile web add @kongseek/dsh-magpie-connector
 ```
 
 Restart DSH and refresh the Web page. Inside [ohmydsh](https://github.com/prgrmrwy/ohmydsh) you can instead enable the local `dsh-magpie-connector` manifest entry and rebuild. Tested with DSH `0.2.0-rc.2`, Web UI, Node.js `>=22.19`.
@@ -105,7 +105,7 @@ Inside the ohmydsh monorepo, install once at the root and add `--workspace=dsh-m
 <!-- section: removal -->
 
 ```sh
-dsh plugin --profile web remove @ks/dsh-magpie-connector
+dsh plugin --profile web remove @kongseek/dsh-magpie-connector
 ```
 
 Restart DSH and refresh the page. Disposal releases registrations, timers and connections; it does not remove credentials or settings. To erase data, delete each line's `MAGPIE_LINE_<ID>_*` refs (plus any pre-0.2.0 `MAGPIE_API_KEY` / `MAGPIE_ACCESS_*` leftovers) through DSH credentials management and remove the plugin settings file after locating it from the installed plugin's data directory. Do not remove a credential if another integration still uses it.
@@ -114,7 +114,7 @@ Inside [ohmydsh](https://github.com/prgrmrwy/ohmydsh), set the manifest entry to
 
 ## Source, license and contributing
 
-This is the [kongshan4219 fork](https://github.com/kongshan4219/dsh-magpie-connector) of [prgrmrwy/dsh-magpie-connector](https://github.com/prgrmrwy/dsh-magpie-connector), which is developed in [ohmydsh](https://github.com/prgrmrwy/ohmydsh/tree/main/packages/dsh-magpie-connector). The fork publishes its package to [npm](https://www.npmjs.com/package/@ks/dsh-magpie-connector) and attaches the same npm tarball to its [GitHub Releases](https://github.com/kongshan4219/dsh-magpie-connector/releases).
+This is the [kongshan4219 fork](https://github.com/kongshan4219/dsh-magpie-connector) of [prgrmrwy/dsh-magpie-connector](https://github.com/prgrmrwy/dsh-magpie-connector), which is developed in [ohmydsh](https://github.com/prgrmrwy/ohmydsh/tree/main/packages/dsh-magpie-connector). The fork publishes its package to [npm](https://www.npmjs.com/package/@kongseek/dsh-magpie-connector) and attaches the same npm tarball to its [GitHub Releases](https://github.com/kongshan4219/dsh-magpie-connector/releases).
 
 [MIT](LICENSE). `@earendil-works/pi-ai` and `undici` are separate MIT-licensed dependencies; the bird artwork follows the notice in [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES). Issues and pull requests are welcome at [prgrmrwy/dsh-magpie-connector](https://github.com/prgrmrwy/dsh-magpie-connector/issues); questions and setup tips go to [Discussions](https://github.com/prgrmrwy/dsh-magpie-connector/discussions).
 

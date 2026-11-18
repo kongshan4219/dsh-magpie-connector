@@ -3,7 +3,7 @@
 ## 0.7.0 — 2026-11-18
 
 - 新增 `magpie_web_search`。使用 Magpie 模型时，DSH 可以通过当前线路调用 Magpie 的网页搜索，并获得带来源链接的结果。
-- Fork 通过 npm 包 `@ks/dsh-magpie-connector` 分发。沿用现有插件 ID、模型路由、线路设置和凭据引用。
+- Fork 通过 npm 包 `@kongseek/dsh-magpie-connector` 分发。沿用现有插件 ID、模型路由、线路设置和凭据引用。
 
 ## 0.6.12 — 2026-11-11
 

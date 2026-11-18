@@ -32,7 +32,7 @@
 ### 安装
 
 ```sh
-dsh plugin --profile web add @ks/dsh-magpie-connector
+dsh plugin --profile web add @kongseek/dsh-magpie-connector
 ```
 
 重启 DSH 并刷新页面。在 [ohmydsh](https://github.com/prgrmrwy/ohmydsh) 中也可以直接启用 local `dsh-magpie-connector` manifest 条目后重新构建。已验证 DSH `0.2.0-rc.2`、Web UI、Node.js `>=22.19`。
@@ -106,7 +106,7 @@ npm run build
 <!-- section: removal -->
 
 ```sh
-dsh plugin --profile web remove @ks/dsh-magpie-connector
+dsh plugin --profile web remove @kongseek/dsh-magpie-connector
 ```
 
 重启 DSH 并刷新页面。dispose 只释放注册、计时器与连接，不删除凭据和设置。需要彻底清理时，通过 DSH credentials 管理删除各线路的 `MAGPIE_LINE_<ID>_*` 凭据（以及升级前遗留的 `MAGPIE_API_KEY` / `MAGPIE_ACCESS_*`），并在确认安装版本的数据目录后删除插件设置文件。如果其它集成仍在使用某个凭据，不要删除。
@@ -115,7 +115,7 @@ dsh plugin --profile web remove @ks/dsh-magpie-connector
 
 ## 来源、许可与参与
 
-[本仓库](https://github.com/kongshan4219/dsh-magpie-connector)是 [prgrmrwy/dsh-magpie-connector](https://github.com/prgrmrwy/dsh-magpie-connector) 的 fork，上游在 [ohmydsh](https://github.com/prgrmrwy/ohmydsh/tree/main/packages/dsh-magpie-connector) 开发。本 fork 先发布到 [npm](https://www.npmjs.com/package/@ks/dsh-magpie-connector)，再把同一份安装包挂到 [GitHub Releases](https://github.com/kongshan4219/dsh-magpie-connector/releases)。
+[本仓库](https://github.com/kongshan4219/dsh-magpie-connector)是 [prgrmrwy/dsh-magpie-connector](https://github.com/prgrmrwy/dsh-magpie-connector) 的 fork，上游在 [ohmydsh](https://github.com/prgrmrwy/ohmydsh/tree/main/packages/dsh-magpie-connector) 开发。本 fork 先发布到 [npm](https://www.npmjs.com/package/@kongseek/dsh-magpie-connector)，再把同一份安装包挂到 [GitHub Releases](https://github.com/kongshan4219/dsh-magpie-connector/releases)。
 
 采用 [MIT](LICENSE) 许可。`@earendil-works/pi-ai` 与 `undici` 是分别以 MIT 许可分发的依赖；鸟形图标来源与许可见 [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES)。欢迎到 [prgrmrwy/dsh-magpie-connector](https://github.com/prgrmrwy/dsh-magpie-connector/issues) 提 issue 和 PR；使用问题与配置经验欢迎发到 [Discussions](https://github.com/prgrmrwy/dsh-magpie-connector/discussions)。
 
