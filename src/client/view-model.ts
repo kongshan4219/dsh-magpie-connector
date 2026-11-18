@@ -6,6 +6,7 @@
 import { t } from './locales.js'
 import type { SidebarWindowKind } from '../shared/sidebar-window.js'
 import type { DshSearchSelection, WebSearchSettings } from '../shared/web-search.js'
+import type { ModelProtocol } from '../shared/protocol.js'
 export interface CardWindow { name?: string; used?: number; resetsAt?: string; unlimited?: boolean; display?: string }
 /** One Codex-style reset credit: when it runs out and, counted by window, which window's. */
 export interface CardReset { until?: string; window?: string }
@@ -30,6 +31,7 @@ export interface ModelGroup { provider: string; models: ModelRow[] }
 export type SyncErrorKind = 'unauthorized' | 'forbidden' | 'http' | 'unreachable' | 'settings' | 'registration'
 export interface LineView {
   id?: string; baseUrl?: string; accessMode?: 'direct' | 'cloudflare'; complete?: boolean
+  protocol?: ModelProtocol
   key?: { configured?: boolean; writable?: boolean }
   access?: { clientId?: { configured?: boolean; writable?: boolean }; clientSecret?: { configured?: boolean; writable?: boolean } }
   refs?: { key?: string; accessClientId?: string; accessClientSecret?: string }

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { credentialRef, type CredentialProvider, type CredentialRef } from '@deepseek-ai/dsh-credentials'
 import {
-  MAX_LINES, MAX_OWNERS, SettingsStore, isAccessMode, normalizeBaseUrl, validateLoadedLines, validateKnownOwners, validatePendingCredentials, webSearchOf,
+  MAX_LINES, MAX_OWNERS, SettingsStore, isAccessMode, normalizeBaseUrl, normalizeLineProtocol, validateLoadedLines, validateKnownOwners, validatePendingCredentials, webSearchOf,
   type AccessMode, type CredentialField, type LineSettings, type PendingCredential, type Settings,
 } from './settings.js'
 import { GatewayTransport, validateIdentity, type ConnectionIdentity } from './transport.js'
@@ -39,6 +39,7 @@ export interface Generation {
   accessMode: AccessMode
   keyFingerprint: string
   catalog: CatalogModel[]
+  catalogInherited?: boolean
   bgAbort: AbortController
   syncPromise?: Promise<void>
   lastSyncAt?: string
@@ -46,7 +47,7 @@ export interface Generation {
   lastSyncErrorKind?: string
   [key: string]: unknown
 }
-export interface Operation extends ConnectionIdentity { gen: Generation; connectionVersion: number; release(): void }
+export interface Operation extends ConnectionIdentity { gen: Generation; protocol?: LineSettings['protocol']; connectionVersion: number; release(): void }
 export interface RuntimeOptions {
   probe?: Probe
   now?: () => number
@@ -225,7 +226,7 @@ export class MagpieRuntime {
     this.current.bgAbort.abort()
     this.current = {
       id: this.current.id + 1, lineId, baseUrl, accessMode, keyFingerprint: fingerprint,
-      catalog: carry?.catalog ? [...carry.catalog] : [], bgAbort: new AbortController(),
+      catalog: carry ? [...carry.catalog] : [], catalogInherited: !!carry, bgAbort: new AbortController(),
       ...(carry?.lastSyncAt ? { lastSyncAt: carry.lastSyncAt } : {}),
     }
     this.emit()
@@ -287,7 +288,7 @@ export class MagpieRuntime {
       this.rotate(identity.lineId ?? '', identity.baseUrl ?? '', identity.accessMode ?? 'direct', fingerprint, carry)
     }
     validateIdentity(identity)
-    const op = { ...identity, gen: this.current, connectionVersion: version, release: this.retainIdentity(identity) }
+    const op = { ...identity, gen: this.current, protocol: active?.line.protocol, connectionVersion: version, release: this.retainIdentity(identity) }
     if (changed && op.key && op.gen.baseUrl) void this.syncGeneration(op.gen, op)
     return op
   }
@@ -366,7 +367,7 @@ export class MagpieRuntime {
         }
         const catalog = mapCatalog(JSON.parse(JSON.stringify(await response.json()), (_key, value) => typeof value === 'string' ? this.redact(value) : value))
         if (!this.isCurrent(gen)) return
-        gen.catalog = catalog; gen.lastSyncAt = new Date().toISOString(); delete gen.lastSyncError; delete gen.lastSyncErrorKind
+        gen.catalog = catalog; gen.catalogInherited = false; gen.lastSyncAt = new Date().toISOString(); delete gen.lastSyncError; delete gen.lastSyncErrorKind
         this.commitOwners(gen, catalog)
       } catch (error) {
         if (!this.isCurrent(gen)) return
@@ -466,7 +467,8 @@ export class MagpieRuntime {
       const baseUrl = 'baseUrl' in entry ? (entry.baseUrl === '' ? '' : normalizeBaseUrl(entry.baseUrl)) : previous?.baseUrl ?? ''
       const accessMode = 'accessMode' in entry ? entry.accessMode : previous?.accessMode ?? 'direct'
       if (!isAccessMode(accessMode)) throw new Error('Invalid accessMode')
-      nextLines.push({ id: lineId, baseUrl, accessMode })
+      const protocol = normalizeLineProtocol('protocol' in entry ? entry.protocol : previous?.protocol, baseUrl)
+      nextLines.push({ id: lineId, baseUrl, accessMode, ...(protocol ? { protocol } : {}) })
       for (const field of CONNECTION_FIELDS) {
         if (!(field in entry)) continue
         const value = entry[field]
@@ -597,6 +599,7 @@ export class MagpieRuntime {
       const [key, clientId, clientSecret] = await Promise.all(Object.values(refs).map(ref => this.credentials.describe(ref)))
       return {
         id: resolved.line.id, baseUrl: resolved.line.baseUrl, accessMode: resolved.line.accessMode, complete: resolved.complete,
+        ...(resolved.line.protocol ? { protocol: resolved.line.protocol } : {}),
         key: status(key!), access: { clientId: status(clientId!), clientSecret: status(clientSecret!) },
         refs: { key: String(refs.key), accessClientId: String(refs.accessClientId), accessClientSecret: String(refs.accessClientSecret) },
       }

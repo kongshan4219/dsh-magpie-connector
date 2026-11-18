@@ -23,7 +23,8 @@ export function validateIdentity(identity: ConnectionIdentity) {
   if (identity.accessMode === 'cloudflare' && !(id && secret)) throw new Error('MAGPIE_ACCESS_PAIR_REQUIRED')
   if (id && identity.baseUrl && new URL(identity.baseUrl).protocol !== 'https:') throw new Error('MAGPIE_ACCESS_HTTPS_REQUIRED')
 }
-const allowed = new Set(['GET /models', 'POST /responses', 'POST /chat/completions', 'GET /magpie/quotas/cards', 'POST /magpie/quotas/refresh', 'POST /magpie/quotas/codex-reset'])
+const modelEndpoints = new Set(['POST /responses', 'POST /chat/completions', 'POST /messages'])
+const allowed = new Set([...modelEndpoints, 'GET /models', 'GET /magpie/quotas/cards', 'POST /magpie/quotas/refresh', 'POST /magpie/quotas/codex-reset'])
 /**
  * Query contract per endpoint: the only keys it may carry and the ones it must
  * carry. Endpoints without an entry take no query at all. A reset names the
@@ -51,11 +52,13 @@ export class GatewayTransport {
     if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname + '/') || url.username || url.password || url.hash || !allowed.has(endpoint)) throw new Error('MAGPIE_ENDPOINT_FORBIDDEN')
     const rule = QUERY_RULES[endpoint]
     const keys = [...url.searchParams.keys()]
-    if (url.search) {
+    if (endpoint === 'POST /messages') {
+      // pi-ai's Anthropic SDK uses beta.messages.create even without beta headers.
+      if (url.search && url.search !== '?beta=true') throw new Error('MAGPIE_QUERY_FORBIDDEN')
+    } else if (url.search) {
       if (!rule || keys.some(key => !rule.allowed.includes(key)) || !rule.required.every(key => keys.includes(key))) throw new Error('MAGPIE_QUERY_FORBIDDEN')
     } else if (rule && rule.required.length) throw new Error('MAGPIE_QUERY_FORBIDDEN')
-    const modelRequest = endpoint === 'POST /responses' || endpoint === 'POST /chat/completions'
-    return this.send(identity, url, { ...init, method }, modelRequest)
+    return this.send(identity, url, { ...init, method }, modelEndpoints.has(endpoint))
   }
 
   async searchWeb(identity: ConnectionIdentity, args: { query: string; count?: number }, signal: AbortSignal): Promise<Response> {

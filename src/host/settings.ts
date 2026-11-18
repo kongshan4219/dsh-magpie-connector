@@ -3,11 +3,12 @@ import { randomBytes } from 'node:crypto'
 import { dirname } from 'node:path'
 import type { SidebarWindowKind } from '../shared/sidebar-window.js'
 import { DEFAULT_WEB_SEARCH, isSearchCount, type WebSearchSettings } from '../shared/web-search.js'
+import type { ModelProtocol } from '../shared/protocol.js'
 
 export type AccessMode = 'direct' | 'cloudflare'
 export type CredentialField = 'key' | 'accessClientId' | 'accessClientSecret'
 /** One configured Magpie ingress line: address + its own credentials binding. */
-export interface LineSettings { id: string; baseUrl: string; accessMode: AccessMode }
+export interface LineSettings { id: string; baseUrl: string; accessMode: AccessMode; protocol?: Exclude<ModelProtocol, 'auto'> }
 /** A credential write that may have been attempted by a settings write. */
 export interface PendingCredential { lineId: string; field: CredentialField }
 
@@ -87,6 +88,11 @@ const OWNER_KEY = /^[a-z0-9][a-z0-9._-]*$/
 export const LINE_ID_PATTERN = /^[0-9a-f]{8}$/
 export const isAccessMode = (value: unknown): value is AccessMode => value === 'direct' || value === 'cloudflare'
 export const isCredentialField = (value: unknown): value is CredentialField => value === 'key' || value === 'accessClientId' || value === 'accessClientSecret'
+export function normalizeLineProtocol(value: unknown, baseUrl: string): LineSettings['protocol'] {
+  if (value === undefined || value === 'auto') return undefined
+  if (value === 'anthropic-messages' && baseUrl.endsWith('/v1')) return value
+  throw new Error('Invalid protocol (Anthropic Messages requires a /v1 base URL)')
+}
 
 /** Normalize one persisted line entry; malformed entries are rejected, not guessed. */
 export function normalizeLineSettings(value: unknown): LineSettings {
@@ -96,7 +102,8 @@ export function normalizeLineSettings(value: unknown): LineSettings {
   const baseUrl = line.baseUrl === '' ? '' : normalizeBaseUrl(line.baseUrl)
   const accessMode = line.accessMode ?? 'direct'
   if (!isAccessMode(accessMode)) throw new Error('Invalid accessMode')
-  return { id: line.id, baseUrl, accessMode }
+  const protocol = normalizeLineProtocol(line.protocol, baseUrl)
+  return { id: line.id, baseUrl, accessMode, ...(protocol ? { protocol } : {}) }
 }
 
 /**

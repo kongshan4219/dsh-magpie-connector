@@ -8,6 +8,7 @@ import { t, type MagpieKey } from './locales.js'
 import { DEFAULT_REFRESH_MINUTES, MAX_REFRESH_MINUTES, setSidebarPreference } from './sidebar-preference.js'
 import { DEFAULT_SIDEBAR_WINDOWS, SIDEBAR_WINDOW_KINDS, normalizeSidebarWindows, type SidebarWindowKind } from '../shared/sidebar-window.js'
 import { DEFAULT_WEB_SEARCH, MAX_SEARCH_RESULTS, type GatewaySearchView } from '../shared/web-search.js'
+import type { ModelProtocol } from '../shared/protocol.js'
 import {
   cacheIds, cardKey, checkDiff, checkSignature, formatTime, parseCards, parseCheck, parseResetOutcome, parseResetTicket, providerOrder, readTime, resetAccount, sameTarget,
   type Card, type CardsView, type CheckSnapshot, type ModelGroup, type ModelRow, type ResetTicket, type SettingsView, type SyncErrorKind,
@@ -415,6 +416,7 @@ const hostnameOf = (baseUrl: string) => { try { return new URL(baseUrl).hostname
 
 interface LineDraft {
   draftId: string; id?: string; baseUrl: string; accessMode: AccessMode; savedAccess: boolean
+  protocol: ModelProtocol
   keyConfigured: boolean; keyWritable: boolean; apiKey: string
   accessConfigured: boolean; accessWritable: boolean; accessClientId: string; accessClientSecret: string
   /** Host-reported completeness of the saved line (never of the unsaved draft). */
@@ -423,15 +425,16 @@ interface LineDraft {
 
 function lineDrafts(settings: SettingsView): LineDraft[] {
   const configured = (access: { clientId?: { configured?: boolean }; clientSecret?: { configured?: boolean } } | undefined) => access?.clientId?.configured === true || access?.clientSecret?.configured === true
-  const source = (settings.lines ?? []).map(line => ({ id: line.id, baseUrl: line.baseUrl ?? '', accessMode: (line.accessMode ?? 'direct') as AccessMode, key: line.key, access: line.access, complete: line.complete !== false }))
+  const source = (settings.lines ?? []).map(line => ({ id: line.id, baseUrl: line.baseUrl ?? '', accessMode: (line.accessMode ?? 'direct') as AccessMode, protocol: line.protocol ?? 'auto', key: line.key, access: line.access, complete: line.complete !== false } as const))
   return source.map((line, index) => ({
     draftId: line.id ?? `new-${index}`, ...(line.id ? { id: line.id } : {}), baseUrl: line.baseUrl, accessMode: line.accessMode,
+    protocol: line.protocol,
     savedAccess: line.accessMode === 'cloudflare', keyConfigured: line.key?.configured === true, keyWritable: line.key?.writable !== false, apiKey: '',
     accessConfigured: configured(line.access), accessWritable: line.access?.clientId?.writable !== false && line.access?.clientSecret?.writable !== false,
     accessClientId: '', accessClientSecret: '', complete: line.complete,
   }))
 }
-const lineSignature = (draft: LineDraft) => JSON.stringify([draft.id ?? null, draft.baseUrl.trim(), draft.accessMode])
+const lineSignature = (draft: LineDraft) => JSON.stringify([draft.id ?? null, draft.baseUrl.trim(), draft.accessMode, draft.protocol])
 
 function Connection({ settings, saving, mutateSettings, api, usage, latency, onRefreshLatency }: { settings: SettingsView; saving: boolean; mutateSettings: SettingsMutation; api: Api; usage: ReactNode; latency: LatencyState; onRefreshLatency: (lineId: string) => void }) {
   const baseline = lineDrafts(settings)
@@ -490,7 +493,7 @@ function Connection({ settings, saving, mutateSettings, api, usage, latency, onR
     return current.filter(draft => draft.draftId !== draftId)
   })
   const add = () => setDrafts(current => {
-    const draft: LineDraft = { draftId: `new-${current.length}-${Date.now()}`, baseUrl: '', accessMode: 'direct', savedAccess: false, keyConfigured: false, keyWritable: true, apiKey: '', accessConfigured: false, accessWritable: true, accessClientId: '', accessClientSecret: '', complete: false }
+    const draft: LineDraft = { draftId: `new-${current.length}-${Date.now()}`, baseUrl: '', accessMode: 'direct', protocol: 'auto', savedAccess: false, keyConfigured: false, keyWritable: true, apiKey: '', accessConfigured: false, accessWritable: true, accessClientId: '', accessClientSecret: '', complete: false }
     pendingDraftId.current = draft.draftId
     setExpanded(draft.draftId); return [...current, draft]
   })
@@ -523,6 +526,8 @@ function Connection({ settings, saving, mutateSettings, api, usage, latency, onR
     const lines = drafts.map(draft => ({
       ...(draft.id ? { id: draft.id } : {}),
       baseUrl: draft.baseUrl.trim(), accessMode: draft.accessMode,
+      ...(draft.protocol !== 'auto' || baseline.find(saved => saved.draftId === draft.draftId)?.protocol === 'anthropic-messages'
+        ? { protocol: draft.protocol } : {}),
       ...(draft.apiKey ? { key: draft.apiKey } : {}),
       ...(draft.accessMode === 'cloudflare'
         ? { ...(draft.accessClientId ? { accessClientId: draft.accessClientId } : {}), ...(draft.accessClientSecret ? { accessClientSecret: draft.accessClientSecret } : {}) }
@@ -680,6 +685,12 @@ function LineCard({ draft, index, total, saving, active, expanded, latency, chec
       h('details', { className: 'dmg-advanced', open: true, 'data-advanced': '' },
         h('summary', null, t('advanced')),
         h('div', { className: 'dmg-advanced-body' },
+          h('label', { className: 'dmg-field' }, h('span', null, t('modelProtocol')),
+            h('select', { className: 'dmg-select', value: draft.protocol, disabled: saving,
+              onChange: (e: { target: { value: string } }) => onChange({ protocol: e.target.value === 'anthropic-messages' ? 'anthropic-messages' : 'auto' }) },
+            h('option', { value: 'auto' }, t('modelProtocolAuto')),
+            h('option', { value: 'anthropic-messages' }, 'Anthropic Messages'))),
+          h('p', { className: 'dmg-hint' }, t('modelProtocolHint')),
           h('label', { className: 'dmg-field' }, h('span', null, `${t('accessMode')}${draft.accessWritable ? '' : t('accessReadonly')}`),
             h('select', { className: 'dmg-select', 'aria-label': t('accessMode'), value: draft.accessMode, disabled: saving || !draft.accessWritable,
               onChange: (e: { target: { value: string } }) => onChange({ accessMode: e.target.value as AccessMode }) },

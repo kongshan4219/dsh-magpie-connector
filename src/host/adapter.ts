@@ -5,6 +5,7 @@ import { createProvider, type Model, type Message, type Usage, type AssistantMes
 import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript'
 import * as chat from '@earendil-works/pi-ai/api/openai-completions'
 import * as responses from '@earendil-works/pi-ai/api/openai-responses'
+import * as messages from '@earendil-works/pi-ai/api/anthropic-messages'
 import type { MagpieRuntime, Operation } from './runtime.js'
 import { TRANSPORT_ID, isMagpieRoute, ownerLabel, ownerOfRoute, type CatalogModel } from './catalog.js'
 import { visibleCatalog } from './visibility.js'
@@ -28,7 +29,7 @@ function replayState(message:AssistantMessage,requestedModel:string,args:Map<num
     }),
   }
 }
-function restoreAssistant(message:HarnessAssistantMessage,model:Model<string>):AssistantMessage {
+function restoreAssistant(message:HarnessAssistantMessage,model:Pick<Model<string>, 'id' | 'api'>):AssistantMessage {
   const content=message.content.flatMap((block):AssistantMessage['content']=>{
     if(block.type==='text')return[{type:'text',text:block.text}]
     if(block.type==='reasoning')return[{type:'thinking',thinking:block.text}]
@@ -68,6 +69,47 @@ export const STREAM_IDLE_TIMEOUT_MS = 300_000
  */
 export const RETRY_POLICY = resolveRetryPolicy({ mode: 'normal', maxRetries: 10, backoff: { initialDelayMs: 1000, maxDelayMs: 60_000, jitterRatio: 0.2 } }, 'dsh-magpie-connector retryPolicy')
 type HttpFailure = { status: number; retryAfterMs?: number }
+const anthropicErrorCodes = new Map([
+  ['authentication_error', 'AUTH'], ['permission_error', 'AUTH'], ['rate_limit_error', 'RATE_LIMIT'],
+  ['overloaded_error', 'SERVER'], ['api_error', 'SERVER'], ['timeout_error', 'TIMEOUT'],
+])
+function classifyAnthropicFailure(message: string, http?: HttpFailure): LlmFailure {
+  if (!http) {
+    // pi-ai surfaces an Anthropic SSE error as the original JSON payload.
+    try {
+      const error = record(record(JSON.parse(message))?.error)
+      if (typeof error?.type === 'string') {
+        const code = anthropicErrorCodes.get(error.type)
+        if (code) return { code, message }
+      }
+    } catch { /* Non-SSE failures use the common classifier. */ }
+  }
+  return classifyFailure(message, http)
+}
+
+const thinkingBudgets = new Map([
+  ['minimal', 1024], ['low', 2048], ['medium', 8192], ['high', 16384], ['xhigh', 24576], ['max', 32000],
+])
+function anthropicThinking(entry: CatalogModel, maxTokens: number, effort?: string) {
+  const id = entry.info.id.toLowerCase()
+  // Magpie's DSH integration uses adaptive thinking on these model families.
+  const claude = /(?:^|[^a-z0-9])(?:opus|sonnet|haiku|fable|mythos)-(\d+)(?:[-.](\d+))?(?!\d)/.exec(id)
+    ?? /claude-(\d+)(?:[-.](\d+))?-(?:opus|sonnet|haiku)/.exec(id)
+  const adaptive = Number(claude?.[1]) > 4 || (Number(claude?.[1]) === 4 && Number(claude?.[2]) >= 6)
+    || /\bglm-5\.[23](?!\d)|\bgemini-(?:[3-9]|\d{2,})(?!\d)/.test(id)
+  const budget = effort && entry.efforts.includes(effort) ? thinkingBudgets.get(effort) : undefined
+  const thinkingBudgetTokens = budget === undefined ? undefined : Math.min(budget, maxTokens - 1)
+  const adaptiveEffort = effort === 'minimal' ? 'low' : effort
+  return {
+    adaptive,
+    options: {
+      ...(effort === 'off' || effort === 'none' ? { thinkingEnabled: false } : {}),
+      ...(budget !== undefined && adaptive ? { thinkingEnabled: true, effort: adaptiveEffort as messages.AnthropicEffort } : {}),
+      ...(!adaptive && thinkingBudgetTokens !== undefined && thinkingBudgetTokens >= 1024
+        ? { thinkingEnabled: true, thinkingBudgetTokens } : {}),
+    } satisfies Partial<messages.AnthropicOptions>,
+  }
+}
 function retryAfterMs(response: Response): number | undefined {
   const raw = response.headers.get('retry-after')?.trim()
   if (!raw) return undefined
@@ -95,8 +137,9 @@ export function classifyFailure(message: string, http?: HttpFailure): LlmFailure
   else code = 'MAGPIE_GENERATION_FAILED'
   return { code, message, ...extra }
 }
-export function mapUsage(u: Usage): TokenUsage {
-  return {inputTokens:u.input,outputTokens:u.output,...(u.cacheRead>0?{cacheReadTokens:u.cacheRead}:{}),...(u.cacheWrite>0?{cacheWriteTokens:u.cacheWrite}:{}),...(u.input>0?{totalTokens:u.input+u.cacheRead+u.cacheWrite+u.output}:{})}
+export function mapUsage(u: Usage, anthropic = false): TokenUsage {
+  const hasInput = u.input > 0 || (anthropic && (u.cacheRead > 0 || u.cacheWrite > 0))
+  return {inputTokens:u.input,outputTokens:u.output,...(u.cacheRead>0?{cacheReadTokens:u.cacheRead}:{}),...(u.cacheWrite>0?{cacheWriteTokens:u.cacheWrite}:{}),...(hasInput?{totalTokens:u.input+u.cacheRead+u.cacheWrite+u.output}:{})}
 }
 export class MagpieAdapter extends LlmAdapter {
   constructor(readonly runtime: MagpieRuntime, readonly attachments?: Pick<AttachmentStore, 'readImage' | 'imageHostPath'>, readonly isFast = (_session: string) => false) { super() }
@@ -121,9 +164,17 @@ export class MagpieAdapter extends LlmAdapter {
   }
   override async prepareCall(route: string, id: string, signal?: AbortSignal): Promise<PreparedAdapterCall> {
     const op=await this.runtime.beginOperation()
-    const entry=this.entryFor(op,route,id)
-    // Prepared objects may be abandoned by SDK validation; retain only while dispatched.
-    op.release()
+    let entry: CatalogModel
+    try {
+      // The inherited catalog keeps the picker populated during failover.
+      // Wait for the selected line's catalog before using its Messages capability.
+      if (!op.protocol && op.gen.catalogInherited) await op.gen.syncPromise
+      entry = this.entryFor(op, route, id)
+      if (op.gen.catalogInherited) entry.nativeEndpoints = entry.nativeEndpoints.filter(path => path !== '/v1/messages')
+    } finally {
+      // Prepared objects may be abandoned by SDK validation; retain only while dispatched.
+      op.release()
+    }
     const untrack=this.runtime.trackPrepared(op)
     signal?.addEventListener('abort',untrack,{once:true})
     if(signal?.aborted)untrack()
@@ -140,7 +191,7 @@ export class MagpieAdapter extends LlmAdapter {
     try {const prepared=await this.prepareCall(options.provider,options.model);yield* prepared.stream(options)}
     catch(error){yield* this.failure(this.runtime.redact(error instanceof Error?error.message:String(error)))}
   }
-  private async context(options:GenerateOptions,model:Model<string>):Promise<ReturnType<typeof normalizeContext>> {
+  private async context(options:GenerateOptions,model:Pick<Model<string>, 'id' | 'api' | 'input'>):Promise<ReturnType<typeof normalizeContext>> {
     const messages:Message[]=[]
     for(const message of options.messages){
       if(message.role==='system'||message.role==='developer'){
@@ -168,14 +219,25 @@ export class MagpieAdapter extends LlmAdapter {
     const controller=new AbortController()
     const signal=AbortSignal.any([controller.signal,this.runtime.transport.signal.signal,...(options.signal?[options.signal]:[])])
     let timer:ReturnType<typeof setTimeout>|undefined,timedOut=false,http:HttpFailure|undefined
+    let anthropic = false
     const arm=()=>{clearTimeout(timer);timer=setTimeout(()=>{timedOut=true;controller.abort()},STREAM_IDLE_TIMEOUT_MS)}
     const timeout=():LlmFailure=>({code:'TIMEOUT',message:`MAGPIE_STREAM_TIMEOUT: no data from the gateway for ${STREAM_IDLE_TIMEOUT_MS/1000}s`})
     try{
       if(!op.key||!op.baseUrl)throw new Error('MAGPIE_NOT_CONFIGURED')
-      if(options.stop?.length)throw new Error('MAGPIE_STOP_UNSUPPORTED')
-      const api=entry.nativeEndpoints.includes('/v1/responses')?'openai-responses':'openai-completions'
-      const model:Model<'openai-completions'|'openai-responses'>={id:entry.info.id,name:entry.info.name,provider:TRANSPORT_ID,api,baseUrl:op.baseUrl,reasoning:entry.efforts.length>0,thinkingLevelMap:{off:null,...Object.fromEntries(entry.efforts.map(e=>[e,e]))},input:entry.info.inputModalities?.includes('image')?['text','image']:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:entry.info.context?.contextWindow??128000,maxTokens:entry.outputLimit??16384,
-        compat:{supportsFinishReason:true,thinkingFormat:'openai',maxTokensField:'max_completion_tokens',...(api==='openai-responses'?{supportsStrictMode:true}:{})} as never}
+      const useResponses = entry.nativeEndpoints.includes('/v1/responses')
+      anthropic = op.protocol === 'anthropic-messages'
+        || (!useResponses && op.baseUrl.endsWith('/v1') && entry.nativeEndpoints.includes('/v1/messages'))
+      if(!anthropic && options.stop?.length)throw new Error('MAGPIE_STOP_UNSUPPORTED')
+      const sharedModel: Omit<Model<string>, 'api' | 'compat'> = {id:entry.info.id,name:entry.info.name,provider:TRANSPORT_ID,baseUrl:op.baseUrl,reasoning:entry.efforts.length>0,thinkingLevelMap:{off:null,...Object.fromEntries(entry.efforts.map(e=>[e,e]))},input:entry.info.inputModalities?.includes('image')?['text','image']:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:entry.info.context?.contextWindow??128000,maxTokens:entry.outputLimit??16384}
+      const thinking = anthropicThinking(entry, options.maxTokens ?? sharedModel.maxTokens, options.reasoningEffort)
+      const model = anthropic
+        ? { ...sharedModel, api: 'anthropic-messages' as const, baseUrl: op.baseUrl.slice(0, -3),
+          compat: { forceAdaptiveThinking: thinking.adaptive, supportsEagerToolInputStreaming: false },
+          thinkingLevelMap: { ...sharedModel.thinkingLevelMap, off: 'off' },
+        } satisfies Model<'anthropic-messages'>
+        : { ...sharedModel, api: useResponses ? 'openai-responses' as const : 'openai-completions' as const,
+          compat: {supportsFinishReason:true,thinkingFormat:'openai',maxTokensField:'max_completion_tokens',...(useResponses?{supportsStrictMode:true}:{})} as never,
+        }
       const context=await this.context(options,model)
       const fast=!!options.sessionId&&this.isFast(options.sessionId)&&entry.serviceTiers.includes('priority')
       arm()
@@ -189,8 +251,16 @@ export class MagpieAdapter extends LlmAdapter {
         const body=response.body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({transform(chunk,out){arm();out.enqueue(chunk)}}))
         return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers})
       }
-      const events=provider.stream(model,context,{apiKey:op.key,fetch:watchedFetch,signal,maxRetries:0,
+      const streamOptions = {fetch:watchedFetch,signal,maxRetries:0,
         ...(options.maxTokens!==undefined?{maxTokens:options.maxTokens}:{}),...(options.temperature!==undefined?{temperature:options.temperature}:{}),
+      }
+      const events = model.api === 'anthropic-messages'
+        ? messages.stream(model, context, { ...streamOptions, ...thinking.options,
+          // Treat gateway credentials as Bearer auth, even if they resemble vendor tokens.
+          headers: { authorization: `Bearer ${op.key}` },
+          ...(options.stop?.length ? {onPayload: payload => ({ ...record(payload), stop_sequences: options.stop })} : {}),
+        })
+        : provider.stream(model,context,{...streamOptions,apiKey:op.key,
         ...(options.reasoningEffort?{reasoningEffort:options.reasoningEffort}:{}),...(fast?{serviceTier:'priority',onPayload:(payload:unknown)=>{(payload as Record<string,unknown>).service_tier='priority'}}:{}),
       } as never)
       const args=new Map<number,string>()
@@ -206,15 +276,15 @@ export class MagpieAdapter extends LlmAdapter {
         else if(event.type==='text_end'||event.type==='thinking_end')yield{type:'block-end',index:event.contentIndex,block:event.type==='text_end'?{type:'text',text:event.content}:{type:'reasoning',text:event.content}}
         else if(event.type==='toolcall_end')yield{type:'block-end',index:event.contentIndex,block:{type:'tool-call',id:event.toolCall.id as never,name:event.toolCall.name,arguments:args.get(event.contentIndex)??JSON.stringify(event.toolCall.arguments)}}
         else if(event.type==='done'){
-          yield{type:'usage',usage:mapUsage(event.message.usage)}
+          yield{type:'usage',usage:mapUsage(event.message.usage,anthropic)}
           // A clean stop with nothing in it would silently end the turn; report it so DSH can retry.
           if(event.reason==='stop'&&event.message.content.length===0){yield{type:'finish',reason:{kind:'error',failure:{code:EMPTY_RESPONSE_CODE,message:'MAGPIE_EMPTY_RESPONSE'}}};return}
           yield{type:'finish',reason:{kind:event.reason==='length'?'max-tokens':event.reason==='toolUse'?'tool-calls':'stop'},replayState:replayState(event.message,entry.info.id,args)};return
         }else if(event.type==='error'){
-          yield{type:'usage',usage:mapUsage(event.error.usage)}
+          yield{type:'usage',usage:mapUsage(event.error.usage,anthropic)}
           const message=this.runtime.redact(event.error.errorMessage??'MAGPIE_GENERATION_FAILED')
           if(signal.aborted&&!timedOut){yield{type:'finish',reason:{kind:'aborted',failure:{code:'ABORTED',message}}};return}
-          yield{type:'finish',reason:{kind:'error',failure:timedOut?timeout():classifyFailure(message,http)}};return
+          yield{type:'finish',reason:{kind:'error',failure:timedOut?timeout():(anthropic?classifyAnthropicFailure:classifyFailure)(message,http)}};return
         }
       }
       throw new Error('MAGPIE_STREAM_TRUNCATED')
