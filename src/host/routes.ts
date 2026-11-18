@@ -7,9 +7,11 @@ import { SpeedController } from './speed.js'
 import { LatencyController } from './latency.js'
 import { normalizeSidebarWindows } from '../shared/sidebar-window.js'
 import { updateWebSearch } from './settings.js'
+import type { SearchSelection } from './search-selection.js'
+import { readGatewaySearch } from './web-search.js'
 export class SettingsController {
   private pending: Promise<void> = Promise.resolve()
-  constructor(readonly runtime:MagpieRuntime) {}
+  constructor(readonly runtime:MagpieRuntime, private readonly searchSelection?: SearchSelection) {}
   async handle(body?:unknown):Promise<Response> {
     if (body === undefined) return this.execute()
     const result = this.pending.then(() => this.execute(body))
@@ -20,7 +22,7 @@ export class SettingsController {
     const runtime=this.runtime
     if(body!==undefined) {
       try {
-        if(!body || typeof body!=='object' || Array.isArray(body) || Object.keys(body).some(k=>!['lines','resync','visibleModels','defaultEffort','sidebarUsage','sidebarRefreshMinutes','sidebarWindows','webSearch'].includes(k))) throw new Error('Invalid settings')
+        if(!body || typeof body!=='object' || Array.isArray(body) || Object.keys(body).some(k=>!['lines','resync','visibleModels','defaultEffort','sidebarUsage','sidebarRefreshMinutes','sidebarWindows','webSearch','replaceDshSearch'].includes(k))) throw new Error('Invalid settings')
         const input=body as Record<string,unknown>
         // Validate the entire union before credentials, disk writes or synchronization.
         if('lines' in input) { if(!Array.isArray(input.lines)) throw new Error('Invalid lines'); if(input.lines.length<1||input.lines.length>5) throw new Error('Invalid lines') }
@@ -34,9 +36,16 @@ export class SettingsController {
         const sidebarRefreshMinutes='sidebarRefreshMinutes' in input ? input.sidebarRefreshMinutes as number : undefined
         const sidebarWindows=normalizeSidebarWindows(input.sidebarWindows) ?? undefined
         const webSearch = 'webSearch' in input ? updateWebSearch(input.webSearch, runtime.store.value.webSearch) : undefined
+        const replaceDshSearch = input.replaceDshSearch
+        if ('replaceDshSearch' in input && typeof replaceDshSearch !== 'boolean') throw new Error('Invalid replaceDshSearch')
+        if (replaceDshSearch === true && (webSearch ?? runtime.store.value.webSearch)?.enabled === false) throw new Error('Enable Magpie web search before replacing the DSH web providers.')
+        if (replaceDshSearch === true && !this.searchSelection) throw new Error('DSH web provider settings are unavailable.')
         const defaultEfforts='defaultEffort' in input ? updateDefaultEffort(runtime.store.value.defaultEfforts,input.defaultEffort,runtime.current.catalog) : undefined
         const connection=Object.fromEntries(Object.entries(input).filter(([k])=>['lines','resync'].includes(k)))
         if(Object.keys(connection).length) {const result=await runtime.settings(connection);if(!result.ok)return result}
+        if (typeof replaceDshSearch === 'boolean' || webSearch?.enabled === false) {
+          await this.searchSelection?.select(replaceDshSearch === true)
+        }
         if(visibleModels!==undefined || defaultEfforts!==undefined || sidebarUsage!==undefined || sidebarRefreshMinutes!==undefined || sidebarWindows!==undefined || webSearch!==undefined) {
           runtime.savePreferences({ ...(visibleModels===undefined?{}:{visibleModels}), ...(defaultEfforts===undefined?{}:{defaultEfforts}), ...(sidebarUsage===undefined?{}:{sidebarUsage}), ...(sidebarRefreshMinutes===undefined?{}:{sidebarRefreshMinutes}), ...(sidebarWindows===undefined?{}:{sidebarWindows}), ...(webSearch===undefined?{}:{webSearch}) })
           if(visibleModels!==undefined || defaultEfforts!==undefined) runtime.publish()
@@ -45,6 +54,7 @@ export class SettingsController {
     }
     const response=await runtime.settings()
     const view=await response.json() as Record<string,unknown>
+    view.dshSearch = this.searchSelection?.read() ?? { selected: false, writable: false }
     view.groups=[...new Set(runtime.current.catalog.map(m=>m.provider))].map(provider=>({provider,models:runtime.current.catalog.filter(m=>m.provider===provider).map(m=>({id:m.info.id,name:m.info.name,efforts:m.efforts,visible:isVisible(m,runtime.store.value.visibleModels)}))}))
     return Response.json(runtime.redactJson(view))
   }
@@ -54,8 +64,8 @@ export interface FetchRegistration {
 }
 export interface FetchRegistry {register(route:FetchRegistration):()=>void}
 /** Register on the injected connection.fetch; caller owns the returned disposer. */
-export function registerRoutes(fetch:FetchRegistry,runtime:MagpieRuntime,speed=new SpeedController(),cards=new CardsController(runtime),latency=new LatencyController(()=>runtime.config()),reset=new ResetController(runtime,cards)) {
- const settings=new SettingsController(runtime)
+export function registerRoutes(fetch:FetchRegistry,runtime:MagpieRuntime,speed=new SpeedController(),cards=new CardsController(runtime),latency=new LatencyController(()=>runtime.config()),reset=new ResetController(runtime,cards),searchSelection?:SearchSelection) {
+ const settings=new SettingsController(runtime, searchSelection)
  const handlers={
   settings:async(request:Request,body:unknown)=>settings.handle(request.method==='POST'?body:undefined),
   cards:async(request:Request,body:unknown)=>request.method==='POST'?cards.refresh(body):cards.get(),
@@ -69,10 +79,10 @@ export function registerRoutes(fetch:FetchRegistry,runtime:MagpieRuntime,speed=n
   },
   lineCheck:async(_request:Request,body:unknown)=>runtime.lineCheck(body),
   latency:async(request:Request)=>latency.read(new URL(request.url).searchParams.get('line') ?? undefined),
+  'web-search':async()=>Response.json(await readGatewaySearch(runtime)),
  }
- /** GET-only latency diagnostics; every other resource keeps the GET/POST surface. */
- const resources=['settings','cards','speed','latency'] as const
- const methodsOf=(resource:typeof resources[number]):('GET'|'POST')[]=>resource==='latency'?['GET']:['GET','POST']
+ const resources=['settings','cards','speed','latency','web-search'] as const
+ const methodsOf=(resource:typeof resources[number]):('GET'|'POST')[]=>resource==='latency'||resource==='web-search'?['GET']:['GET','POST']
  const disposers:(()=>void)[]=[]
  try {
   for(const resource of resources) disposers.push(fetch.register({path:`/api/dsh-magpie-connector/${resource}`,methods:methodsOf(resource),requestBody:'buffered',fetch:async request=>{

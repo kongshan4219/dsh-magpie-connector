@@ -118,7 +118,7 @@ Allowed relative paths/methods:
 - `POST /magpie/quotas/refresh` (only provider/user query keys)
 - `POST /magpie/quotas/codex-reset` (requires user and credit query keys)
 
-`GatewayTransport.searchWeb(identity, args, signal)` sends only the `web_search` MCP tool call. It replaces the configured URL's final version segment with `/mcp/magpie/web-search`, retaining the origin and any reverse-proxy prefix. Magpie handles this call without a session and returns JSON-RPC.
+`GatewayTransport.searchWeb(identity, args, signal)` and `fetchWeb(identity, url, signal)` call the `web_search` and `web_fetch` MCP tools respectively. `listWebSearchTools(identity, signal)` uses MCP `tools/list` to read the gateway's public capability schema. All three replace the configured URL's final version segment with `/mcp/magpie/web-search`, retaining the origin and any reverse-proxy prefix. Magpie handles these calls without a session and returns JSON-RPC.
 
 Both methods force authorization and DSH attribution headers, apply the line's Access settings, reject redirects, and combine caller and dispose signals. Background requests additionally use `gen.bgAbort`. Generation and user-initiated search use their captured identities. `dispose()` aborts requests and destroys the private agent while retaining settings and credentials.
 

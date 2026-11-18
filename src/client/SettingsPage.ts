@@ -7,7 +7,7 @@ import { UsageCard } from './UsageCard.js'
 import { t, type MagpieKey } from './locales.js'
 import { DEFAULT_REFRESH_MINUTES, MAX_REFRESH_MINUTES, setSidebarPreference } from './sidebar-preference.js'
 import { DEFAULT_SIDEBAR_WINDOWS, SIDEBAR_WINDOW_KINDS, normalizeSidebarWindows, type SidebarWindowKind } from '../shared/sidebar-window.js'
-import { DEFAULT_WEB_SEARCH, MAX_SEARCH_RESULTS, searchAdminLink, type WebSearchSettings } from '../shared/web-search.js'
+import { DEFAULT_WEB_SEARCH, MAX_SEARCH_RESULTS, type GatewaySearchView } from '../shared/web-search.js'
 import {
   cacheIds, cardKey, checkDiff, checkSignature, formatTime, parseCards, parseCheck, parseResetOutcome, parseResetTicket, providerOrder, readTime, resetAccount, sameTarget,
   type Card, type CardsView, type CheckSnapshot, type ModelGroup, type ModelRow, type ResetTicket, type SettingsView, type SyncErrorKind,
@@ -296,7 +296,7 @@ export function MagpieSettings({ api }: { api: Api }) {
     settings ? h(Connection, { settings, saving: savingSettings, mutateSettings, api, latency, onRefreshLatency: (lineId: string) => { void readLatency(lineId) },
       usage: h(UsageStatus, { cards, busy, ...(noteScope === undefined ? { notice, alert: usageAlert } : {}), onFetchAll: () => { void fetchAll() }, saving: savingSettings }) })
       : settingsError ? null : h('p', { role: 'status', className: 'dmg-hint' }, t('readingSettings')),
-    settings ? h(WebSearchPreference, { settings, saving: savingSettings, mutateSettings }) : null,
+    settings ? h(WebSearchPreference, { settings, saving: savingSettings, mutateSettings, api }) : null,
     settings ? h(SidebarUsagePreference, { settings, saving: savingSettings, mutateSettings }) : null,
     ...providerOrder(groups, cardList).map(provider => h(ProviderGroup, {
       key: provider, provider,
@@ -795,21 +795,33 @@ function ModelLine({ model, visible, effort, disabled, onVisible, onEffort }: {
 const windowKindLabel = (kind: SidebarWindowKind): string =>
   kind === 'fiveHour' ? t('sidebarWindowFiveHour') : kind === 'weekly' ? t('sidebarWindowWeekly') : t('sidebarWindowMonthly')
 
-function WebSearchPreference({ settings, saving, mutateSettings }: {
-  settings: SettingsView; saving: boolean; mutateSettings: SettingsMutation
+function WebSearchPreference({ settings, saving, mutateSettings, api }: {
+  settings: SettingsView; saving: boolean; mutateSettings: SettingsMutation; api: Api
 }) {
-  const { enabled, count, adminUrl } = settings.webSearch ?? DEFAULT_WEB_SEARCH
-  const [draft, setDraft] = useState(adminUrl)
+  const { enabled, count } = settings.webSearch ?? DEFAULT_WEB_SEARCH
+  const replace = settings.dshSearch?.selected === true
   const [failed, setFailed] = useState('')
-  useEffect(() => { setDraft(adminUrl) }, [adminUrl])
-  const activeBaseUrl = settings.lines?.find(line => line.id === settings.activeLineId)?.baseUrl
-  const href = searchAdminLink(adminUrl, activeBaseUrl)
-  const save = async (patch: Partial<WebSearchSettings>) => {
+  const [gatewayRead, setGatewayRead] = useState(0)
+  const [gateway, setGateway] = useState<GatewaySearchView>()
+  const activeId = settings.activeLineId
+  const activeBaseUrl = settings.lines?.find(line => line.id === activeId)?.baseUrl
+  useEffect(() => {
+    if (!activeBaseUrl) { setGateway({ status: 'unconfigured' }); return }
+    let mounted = true
+    setGateway(undefined)
+    void api({ method: 'GET', path: 'web-search' }).then(response => {
+      if (mounted) setGateway(isOk(response) ? response.body as GatewaySearchView : { status: 'error' })
+    }, () => { if (mounted) setGateway({ status: 'error' }) })
+    return () => { mounted = false }
+  }, [api, activeId, activeBaseUrl, gatewayRead])
+  const save = async (patch: Record<string, unknown>) => {
     setFailed('')
-    const response = await mutateSettings({ webSearch: patch })
+    const response = await mutateSettings(patch)
     if (response?.error) setFailed(response.error)
-    if (response?.view && patch.adminUrl !== undefined) setDraft(response.view.webSearch?.adminUrl ?? '')
   }
+  const gatewayStates = { ok: 'webSearchGatewayOk', unconfigured: 'webSearchGatewayUnconfigured', unavailable: 'webSearchGatewayUnavailable', forbidden: 'webSearchGatewayForbidden', error: 'webSearchGatewayError' } as const
+  const scopeLabels = { allowed_domains: 'webSearchScopeAllow', blocked_domains: 'webSearchScopeBlock', recency_days: 'webSearchScopeRecency' } as const
+  const scopes = gateway?.scopes?.map(scope => t(scopeLabels[scope])).join(', ')
   return h('section', { className: 'dmg-panel', 'data-web-search': '' },
     h('h3', null, t('webSearchTitle')),
     h('div', { className: 'dmg-switch-row' },
@@ -817,37 +829,41 @@ function WebSearchPreference({ settings, saving, mutateSettings }: {
       h('button', {
         type: 'button', className: 'dmg-switch', role: 'switch', disabled: saving,
         'aria-checked': enabled, 'aria-label': t('webSearchToggle'), 'data-web-search-switch': '',
-        onClick: () => { void save({ enabled: !enabled }) },
+        onClick: () => { void save({ webSearch: { enabled: !enabled } }) },
       }, h('i', null)),
     ),
     h('p', { className: 'dmg-hint' }, t('webSearchHint')),
+    h('div', { className: 'dmg-switch-row' },
+      h('span', null, t('webSearchDshProvider')),
+      h('button', {
+        type: 'button', className: 'dmg-switch', role: 'switch',
+        'aria-checked': replace, 'aria-label': t('webSearchDshProvider'), 'data-web-search-replace': '',
+        disabled: saving || !settings.dshSearch?.writable || (!enabled && !replace),
+        onClick: () => { void save({ replaceDshSearch: !replace }) },
+      }, h('i', null)),
+    ),
+    h('p', { className: 'dmg-hint' }, t(replace ? 'webSearchReplacementActive' : settings.dshSearch?.writable ? 'webSearchReplacementHint' : 'webSearchReplacementUnavailable')),
     h('label', { className: 'dmg-head' },
       h('span', null, t('webSearchCount')),
       h('select', {
         className: 'dmg-select', value: count ?? '', disabled: saving || !enabled, 'data-web-search-count': '',
-        onChange: (event: { target: { value: string } }) => { void save({ count: event.target.value ? Number(event.target.value) : null }) },
+        onChange: (event: { target: { value: string } }) => { void save({ webSearch: { count: event.target.value ? Number(event.target.value) : null } }) },
       }, h('option', { value: '' }, t('webSearchGatewayDefault')),
       ...Array.from({ length: MAX_SEARCH_RESULTS }, (_, i) => h('option', { key: i + 1, value: i + 1 }, i + 1))),
     ),
     h('div', { className: 'dmg-web-search-management' },
       h('div', { className: 'dmg-head' },
         h('h4', null, t('webSearchManagement')),
-        href ? h('a', { className: 'dmg-web-search-link', href, target: '_blank', rel: 'noopener noreferrer' }, t('webSearchOpenAdmin')) : null,
+        h('button', { type: 'button', className: 'dmg-button', disabled: !activeBaseUrl || !gateway,
+          onClick: () => setGatewayRead(value => value + 1),
+        }, t('webSearchGatewayRefresh')),
       ),
+      h('p', { className: 'dmg-hint', role: 'status' }, t(gateway ? gatewayStates[gateway.status] ?? 'webSearchGatewayError' : 'webSearchGatewayLoading')),
+      gateway?.status === 'ok' && gateway.count !== undefined
+        ? h('p', { className: 'dmg-hint', 'data-gateway-search-count': '' }, t('webSearchGatewayCount', { count: gateway.count })) : null,
+      gateway?.fetch ? h('p', { className: 'dmg-hint' }, t('webSearchGatewayFetch')) : null,
+      scopes ? h('p', { className: 'dmg-hint' }, t('webSearchGatewayScopes', { filters: scopes })) : null,
       h('p', { className: 'dmg-hint' }, t('webSearchManagementHint')),
-      h('div', { className: 'dmg-web-search-url' },
-        h('input', {
-          type: 'text', inputMode: 'url', className: 'dmg-input', value: draft, disabled: saving,
-          'aria-label': t('webSearchAdminUrl'), placeholder: t('webSearchAdminPlaceholder'), 'data-web-search-admin-url': '',
-          onChange: (event: { target: { value: string } }) => setDraft(event.target.value),
-          onKeyDown: (event: { key: string; preventDefault(): void }) => {
-            if (event.key === 'Enter' && !saving && draft !== adminUrl) { event.preventDefault(); void save({ adminUrl: draft }) }
-          },
-        }),
-        h('button', { type: 'button', className: 'dmg-button', disabled: saving || draft === adminUrl, 'data-web-search-save-url': '',
-          onClick: () => { void save({ adminUrl: draft }) },
-        }, t('save')),
-      ),
     ),
     failed ? h('p', { className: 'dmg-error', role: 'alert' }, failed) : null,
   )

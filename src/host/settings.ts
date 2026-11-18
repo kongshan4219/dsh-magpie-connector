@@ -2,7 +2,7 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync } from '
 import { randomBytes } from 'node:crypto'
 import { dirname } from 'node:path'
 import type { SidebarWindowKind } from '../shared/sidebar-window.js'
-import { DEFAULT_WEB_SEARCH, isSearchCount, normalizeSearchAdminUrl, type WebSearchSettings } from '../shared/web-search.js'
+import { DEFAULT_WEB_SEARCH, isSearchCount, type WebSearchSettings } from '../shared/web-search.js'
 
 export type AccessMode = 'direct' | 'cloudflare'
 export type CredentialField = 'key' | 'accessClientId' | 'accessClientSecret'
@@ -31,15 +31,15 @@ export interface Settings {
   /** 0.6.7 legacy single tier; read once for migration, never written. */
   sidebarWindow?: unknown
   webSearch?: WebSearchSettings
+  /** Previous user override of DSH's search provider. Null restores the inherited selection. */
+  webSearchPreviousProvider?: string | null
+  webFetchPreviousProvider?: string | null
 }
 
 export function webSearchOf(value?: Partial<WebSearchSettings>): WebSearchSettings {
-  let adminUrl = ''
-  try { adminUrl = normalizeSearchAdminUrl(value?.adminUrl ?? '') } catch { /* Ignore malformed persisted addresses. */ }
   return {
     enabled: typeof value?.enabled === 'boolean' ? value.enabled : DEFAULT_WEB_SEARCH.enabled,
     count: isSearchCount(value?.count) ? value.count : DEFAULT_WEB_SEARCH.count,
-    adminUrl,
   }
 }
 
@@ -47,7 +47,7 @@ export function updateWebSearch(input: unknown, current?: WebSearchSettings): We
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid webSearch')
   const patch = input as Record<string, unknown>
   const keys = Object.keys(patch)
-  if (!keys.length || keys.some(key => !['enabled', 'count', 'adminUrl'].includes(key))) throw new Error('Invalid webSearch')
+  if (!keys.length || keys.some(key => !['enabled', 'count'].includes(key))) throw new Error('Invalid webSearch')
   const next = webSearchOf(current)
   if ('enabled' in patch) {
     if (typeof patch.enabled !== 'boolean') throw new Error('Invalid webSearch.enabled')
@@ -57,7 +57,6 @@ export function updateWebSearch(input: unknown, current?: WebSearchSettings): We
     if (patch.count !== null && !isSearchCount(patch.count)) throw new Error('Invalid webSearch.count')
     next.count = patch.count
   }
-  if ('adminUrl' in patch) next.adminUrl = normalizeSearchAdminUrl(patch.adminUrl)
   return next
 }
 

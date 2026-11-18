@@ -188,9 +188,6 @@ export const settingsCss = `
 .dmg-switch:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
 .dmg-switch>i{display:block;width:16px;height:16px;border-radius:999px;background:#fff}
 .dmg-web-search-management{display:flex;flex-direction:column;gap:8px;padding-top:10px;border-top:.5px solid var(--dsw-alias-border-l2)}
-.dmg-web-search-url{display:flex;align-items:center;gap:8px}
-.dmg-web-search-url>.dmg-input{flex:1}
-.dmg-web-search-link{color:var(--dsw-alias-state-business-primary);font-size:12px;text-underline-offset:2px}
 .dmg-switch-hint{margin:6px 0 0;font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-tertiary)}
 .dmg-refresh-row{display:flex;align-items:center;gap:12px;margin-top:12px;font-size:13px;color:var(--dsw-alias-label-primary)}
 .dmg-refresh-row>span:first-child{flex:1;min-width:0}

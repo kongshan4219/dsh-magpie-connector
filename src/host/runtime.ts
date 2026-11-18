@@ -184,6 +184,10 @@ export class MagpieRuntime {
       ...(typeof value.sidebarRefreshMinutes === 'number' ? { sidebarRefreshMinutes: value.sidebarRefreshMinutes } : {}),
       ...(storedWindows ? { sidebarWindows: storedWindows } : {}),
       ...(value.webSearch ? { webSearch: webSearchOf(value.webSearch) } : {}),
+      ...(value.webSearchPreviousProvider === null || typeof value.webSearchPreviousProvider === 'string'
+        ? { webSearchPreviousProvider: value.webSearchPreviousProvider } : {}),
+      ...(value.webFetchPreviousProvider === null || typeof value.webFetchPreviousProvider === 'string'
+        ? { webFetchPreviousProvider: value.webFetchPreviousProvider } : {}),
       ...(this.owners.length ? { knownOwners: this.owners } : {}),
     }
     for (const [key, field] of Object.entries(patch)) {

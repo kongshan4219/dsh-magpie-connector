@@ -59,6 +59,18 @@ export class GatewayTransport {
   }
 
   async searchWeb(identity: ConnectionIdentity, args: { query: string; count?: number }, signal: AbortSignal): Promise<Response> {
+    return this.searchMcp(identity, { method: 'tools/call', params: { name: 'web_search', arguments: args } }, signal)
+  }
+
+  async fetchWeb(identity: ConnectionIdentity, url: string, signal: AbortSignal): Promise<Response> {
+    return this.searchMcp(identity, { method: 'tools/call', params: { name: 'web_fetch', arguments: { url, max_chars: 100_000 } } }, signal)
+  }
+
+  async listWebSearchTools(identity: ConnectionIdentity, signal: AbortSignal): Promise<Response> {
+    return this.searchMcp(identity, { method: 'tools/list' }, signal)
+  }
+
+  private async searchMcp(identity: ConnectionIdentity, payload: { method: string; params?: object }, signal: AbortSignal): Promise<Response> {
     validateIdentity(identity)
     const url = new URL(normalizeBaseUrl(identity.baseUrl))
     url.pathname = url.pathname.replace(/\/v\d+$/, '/mcp/magpie/web-search')
@@ -66,7 +78,7 @@ export class GatewayTransport {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       // Magpie answers this stateless MCP tool call directly as JSON-RPC.
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'web_search', arguments: args } }),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, ...payload }),
       signal,
     }, false)
   }
