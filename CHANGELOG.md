@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.2 — 2026-11-18
+
+- 对当前线路声明原生 `/v1/messages` 的模型支持 Anthropic Messages，包括流式对话、工具调用及结果、签名思考回放和用量。协议优先级为 Responses、Messages、Chat Completions。
+- 线路高级设置可选 Anthropic Messages，由 Magpie 为其他模型转换协议。
+
 ## 0.8.1 — 2026-11-18
 
 - 可从 Magpie 设置用一个开关切换 DSH 内置 `web_search` 和 `web_fetch`。开启后两个工具走当前 Magpie 线路，关闭后分别恢复原提供方。
