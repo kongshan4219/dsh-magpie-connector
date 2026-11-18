@@ -1,6 +1,6 @@
 import { Agent, Dispatcher1Wrapper, fetch as directFetch } from 'undici'
 import { attributionHeaders } from '@deepseek-ai/dsh-llm'
-import type { AccessMode } from './settings.js'
+import { normalizeBaseUrl, type AccessMode } from './settings.js'
 
 export interface ConnectionIdentity {
   baseUrl: string
@@ -54,6 +54,24 @@ export class GatewayTransport {
     if (url.search) {
       if (!rule || keys.some(key => !rule.allowed.includes(key)) || !rule.required.every(key => keys.includes(key))) throw new Error('MAGPIE_QUERY_FORBIDDEN')
     } else if (rule && rule.required.length) throw new Error('MAGPIE_QUERY_FORBIDDEN')
+    const modelRequest = endpoint === 'POST /responses' || endpoint === 'POST /chat/completions'
+    return this.send(identity, url, { ...init, method }, modelRequest)
+  }
+
+  async searchWeb(identity: ConnectionIdentity, args: { query: string; count?: number }, signal: AbortSignal): Promise<Response> {
+    validateIdentity(identity)
+    const url = new URL(normalizeBaseUrl(identity.baseUrl))
+    url.pathname = url.pathname.replace(/\/v\d+$/, '/mcp/magpie/web-search')
+    return this.send(identity, url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      // Magpie answers this stateless MCP tool call directly as JSON-RPC.
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'web_search', arguments: args } }),
+      signal,
+    }, false)
+  }
+
+  private async send(identity: ConnectionIdentity, url: URL, init: RequestInit, modelRequest: boolean): Promise<Response> {
     const headers = new Headers(init.headers)
     for (const [key, value] of Object.entries(attributionHeaders())) headers.set(key, value)
     headers.set('authorization', `Bearer ${identity.key}`)
@@ -65,9 +83,8 @@ export class GatewayTransport {
     }
     try {
       // Read model middleware at send time; only bridge the DOM/undici fetch types here.
-      const modelRequest = endpoint === 'POST /responses' || endpoint === 'POST /chat/completions'
       const send = modelRequest ? globalThis.fetch as unknown as typeof directFetch : directFetch
-      return await send(url, { ...init, method, headers: Object.fromEntries(headers), redirect: 'error', dispatcher: modelRequest ? this.modelDispatcher : this.agent,
+      return await send(url, { ...init, headers: Object.fromEntries(headers), redirect: 'error', dispatcher: modelRequest ? this.modelDispatcher : this.agent,
         signal: AbortSignal.any([this.signal.signal, ...(init.signal ? [init.signal] : [])]),
       } as Parameters<typeof directFetch>[1]) as unknown as Response
     } catch (error) {

@@ -10,6 +10,8 @@ import { registerRoutes } from './host/routes.js'
 import { SpeedController } from './host/speed.js'
 import { createDisposer } from './host/dispose.js'
 import { createRouteRegistrar, type RouteRegistrar } from './host/registrar.js'
+import { isMagpieRoute } from './host/catalog.js'
+import { createWebSearchTool } from './host/web-search.js'
 export { MagpieRuntime, lineCredentialRefs, lineIdOfCredentialRef } from './host/runtime.js'
 export { MagpieAdapter, mapUsage } from './host/adapter.js'
 export { SettingsStore } from './host/settings.js'
@@ -31,6 +33,12 @@ export function apply(ctx: Context, config: Config = {}) {
   ctx.on('credentials/reference-updated', ref => runtime.invalidateCredential(ref))
   ctx.inject(['connection'], child => {
     child.effect(() => registerRoutes(child.connection.fetch, runtime, speed).dispose)
+  })
+  ctx.inject(['tools'], child => {
+    const tools = child.get('tools')
+    if (typeof tools?.resolve === 'function') child.effect(() => tools.register(createWebSearchTool(runtime), {
+      when: ({ modelSelection }) => isMagpieRoute(modelSelection.provider),
+    }))
   })
   const dispose = createDisposer(runtime, [() => registrar.dispose()])
   ctx.effect(() => dispose)

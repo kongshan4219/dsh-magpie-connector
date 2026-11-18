@@ -107,7 +107,7 @@ Core advertises current catalog via `listModels()` and resolves `entry.info`. Fe
 
 ## Transport
 
-`GatewayTransport.request({baseUrl,key}, method, path, init?)` is the only outbound transport. `fetchFor(identity)` returns the same captured-identity transport as a standard fetch for pi-ai `options.fetch`. Model requests (`POST /responses` and `POST /chat/completions`) read `globalThis.fetch` at send time so host context middleware can intercept them, including wrappers installed after transport creation. Management requests use undici's direct fetch. Model requests pass a `Dispatcher1Wrapper` over the private undici 8 Agent for Node's built-in fetch dispatcher compatibility; management requests use the Agent directly. Both paths retain the same connection timeout and request safeguards.
+`GatewayTransport.request({baseUrl,key}, method, path, init?)` handles API-root requests. `fetchFor(identity)` exposes the same captured-identity transport to pi-ai. Model requests (`POST /responses` and `POST /chat/completions`) read `globalThis.fetch` at send time so host context middleware can intercept them. They pass a `Dispatcher1Wrapper` over the private undici Agent for compatibility with Node's built-in fetch. Other requests use undici's direct fetch and the private Agent.
 
 Allowed relative paths/methods:
 
@@ -116,8 +116,11 @@ Allowed relative paths/methods:
 - `POST /chat/completions`
 - `GET /magpie/quotas/cards`
 - `POST /magpie/quotas/refresh` (only provider/user query keys)
+- `POST /magpie/quotas/codex-reset` (requires user and credit query keys)
 
-Every request validates same origin and exact API-root-relative path, forces authorization and DSH attribution headers, uses a private undici Agent, rejects redirects and combines caller/dispose signals. Background requests additionally use `gen.bgAbort`; generation must **not** use that signal. `dispose()` aborts and destroys the private agent, without deleting settings or credentials.
+`GatewayTransport.searchWeb(identity, args, signal)` sends only the `web_search` MCP tool call. It replaces the configured URL's final version segment with `/mcp/magpie/web-search`, retaining the origin and any reverse-proxy prefix. Magpie handles this call without a session and returns JSON-RPC.
+
+Both methods force authorization and DSH attribution headers, apply the line's Access settings, reject redirects, and combine caller and dispose signals. Background requests additionally use `gen.bgAbort`. Generation and user-initiated search use their captured identities. `dispose()` aborts requests and destroys the private agent while retaining settings and credentials.
 
 ## Host wiring
 
