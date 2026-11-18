@@ -74,6 +74,8 @@ dsh plugin --profile web add @kongseek/dsh-magpie-connector
 
 使用 Magpie 模型时，DSH 可通过 `magpie_web_search` 调用网关的网页搜索，并获得带来源链接的结果。需要 DSH 宿主支持按模型启用工具，以及 Magpie 已配置可用的搜索服务。自建反代需转发所用线路的 `POST /mcp/magpie/web-search`。若 gateway key 限制了 MCP 工具，需允许 `magpie-web-search` 下的 `web_search`。
 
+在 **设置 → Magpie → 联网搜索** 可启用或关闭此工具，并设置默认返回条数。默认保留启用和网关默认条数。代搜供应商、失败换用顺序、搜索 API 和模型自带搜索策略可通过「打开 Magpie 管理页」配置。管理页与网关使用不同域名时，请先保存管理页地址。
+
 - **失败交给 DSH 重试，插件不重放请求。** 适配器声明与 `dsh-plugin-subscriptions` 相同的 `llm-retry` 策略（最多 10 次，1 秒起指数退避至 60 秒，±20% 抖动，429 时遵守 `Retry-After`）。`TIMEOUT`、`TRANSPORT`、`SERVER`、`RATE_LIMIT`、`EMPTY_RESPONSE` 会重试；401/403、额度用尽、上下文超限与其它 4xx 不重试。
 - **默认输出预算为上下文压缩预留空间。** 网关的 `max_output_tokens` 是模型能力上限，不直接作为每次请求的默认预算。交给 DSH 的默认预算是 `min(能力上限, max(1, 窗口/4, 窗口/2 − 65536))`，给 DSH 的上下文压缩留出空间；显式设置的 `maxTokens` 不受影响。上下文窗口小于 104,026 token 的模型仍按同一公式计算，但不保证通过 DSH 的压缩检查。
 - **只有持续静默才会结束流。** 响应头、SSE 事件和心跳都算有数据；连续 300 秒没有任何数据才以 `TIMEOUT` 结束（消息含 `MAGPIE_STREAM_TIMEOUT`）。只要网关还在发心跳，长时间推理不会被截断。

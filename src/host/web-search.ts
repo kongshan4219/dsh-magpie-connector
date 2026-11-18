@@ -1,5 +1,6 @@
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { MagpieRuntime, Operation } from './runtime.js'
+import { isSearchCount, MAX_SEARCH_RESULTS } from '../shared/web-search.js'
 
 const SEARCH_TIMEOUT_MS = 60_000
 
@@ -11,7 +12,7 @@ export function createWebSearchTool(runtime: MagpieRuntime): ToolDefinition {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'The search query.' },
-        count: { type: 'integer', minimum: 1, maximum: 20, description: 'Number of results. Omit to use the gateway default.' },
+        count: { type: 'integer', minimum: 1, maximum: MAX_SEARCH_RESULTS, description: 'Number of results. Omit to use the configured default.' },
       },
       required: ['query'],
       additionalProperties: false,
@@ -24,10 +25,11 @@ export function createWebSearchTool(runtime: MagpieRuntime): ToolDefinition {
       const input = args as { query?: unknown; count?: unknown } | undefined
       const query = typeof input?.query === 'string' ? input.query.trim() : ''
       if (!query) throw new Error('Magpie web search requires a non-empty query.')
-      const count = input?.count
-      if (count !== undefined && (typeof count !== 'number' || !Number.isInteger(count) || count < 1 || count > 20)) {
-        throw new Error('Magpie web search count must be an integer between 1 and 20.')
+      const requestedCount = input?.count
+      if (requestedCount !== undefined && !isSearchCount(requestedCount)) {
+        throw new Error(`Magpie web search count must be an integer between 1 and ${MAX_SEARCH_RESULTS}.`)
       }
+      if (runtime.store.value.webSearch?.enabled === false) throw new Error('Magpie web search is disabled.')
 
       const deadline = AbortSignal.timeout(SEARCH_TIMEOUT_MS)
       const searchSignal = AbortSignal.any([signal, deadline])
@@ -36,7 +38,10 @@ export function createWebSearchTool(runtime: MagpieRuntime): ToolDefinition {
         searchSignal.throwIfAborted()
         operation = await runtime.beginOperation()
         searchSignal.throwIfAborted()
+        const preferences = runtime.store.value.webSearch
+        if (preferences?.enabled === false) throw new Error('Magpie web search is disabled.')
         if (!operation.baseUrl || !operation.key) throw new Error('Configure a Magpie gateway line before searching.')
+        const count = requestedCount ?? (isSearchCount(preferences?.count) ? preferences.count : undefined)
         const response = await runtime.transport.searchWeb(operation, { query, ...(count === undefined ? {} : { count }) }, searchSignal)
         if (!response.ok) {
           await response.body?.cancel()

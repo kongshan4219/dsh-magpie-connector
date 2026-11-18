@@ -1,5 +1,7 @@
 import { expect, test } from 'vitest'
 import ToolsService, { type ToolActivationContext, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { createGateway, deferred, json } from './support/gateway.js'
 import { mountRealHost, until } from './support/host.js'
 
@@ -21,6 +23,7 @@ test('DSH admits Magpie search for Magpie models and executes it on the configur
     const tools = await until(() => host.ctx.get('tools')?.get(toolName) && host.ctx.get('tools'), 'DSH search registration')
     const response = await host.call('settings', { lines: [{ baseUrl: gateway.baseUrl.replace('/v1', '/proxy/v1'), key }] })
     expect(response.status).toBe(200)
+    expect((await response.json()).webSearch).toEqual({ enabled: true, count: null, adminUrl: '' })
 
     const signal = new AbortController().signal
     const agent = {} as ToolActivationContext['agent']
@@ -46,6 +49,28 @@ test('DSH admits Magpie search for Magpie models and executes it on the configur
     gateway.handlers.set(`POST ${searchPath}`, json({ jsonrpc: '2.0', id: 1, result: { isError: true, content: [{ type: 'text', text: `Search unavailable: ${key}` }] } }))
     await expect(call({ query: 'example' })).rejects.toThrow('Search unavailable: [redacted]')
     expect(gateway.requests.filter(request => request.path === searchPath).at(-1)?.body).toMatchObject({ params: { arguments: { query: 'example' } } })
+
+    const updated = await host.call('settings', { webSearch: { count: 4, adminUrl: 'https://admin.example/magpie/?view=settings&tab=models' } })
+    expect((await updated.json()).webSearch).toEqual({ enabled: true, count: 4, adminUrl: 'https://admin.example/magpie/' })
+    expect((await host.call('settings', { webSearch: { enabled: false, count: 21 } })).status).toBe(400)
+    expect((await host.call('settings', { webSearch: { adminUrl: 'javascript:alert(1)' } })).status).toBe(400)
+    gateway.handlers.set(`POST ${searchPath}`, json({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: hit }] } }))
+    await expect(call({ query: 'default count' })).resolves.toBe(hit)
+    expect(gateway.requests.filter(request => request.path === searchPath).at(-1)?.body).toMatchObject({ params: { arguments: { query: 'default count', count: 4 } } })
+
+    expect((await host.call('settings', { webSearch: { enabled: false } })).status).toBe(200)
+    const disabled = await resolve('dsh-magpie-connector-test')
+    expect(tools.executable(toolName, agent, disabled)).toBeUndefined()
+    await expect(call({ query: 'formerly admitted' })).rejects.toThrow('disabled')
+    expect(gateway.requests.filter(request => request.path === searchPath)).toHaveLength(3)
+    disabled.dispose()
+    expect((await host.call('settings', { sidebarUsage: true })).status).toBe(200)
+    const persisted = JSON.parse(readFileSync(join(host.home, 'plugins/dsh-magpie-connector/settings.json'), 'utf8'))
+    expect(persisted.webSearch).toEqual({ enabled: false, count: 4, adminUrl: 'https://admin.example/magpie/' })
+    expect((await host.call('settings', { webSearch: { enabled: true } })).status).toBe(200)
+    const reenabled = await resolve('dsh-magpie-connector-test')
+    expect(tools.executable(toolName, agent, reenabled)).toBeDefined()
+    reenabled.dispose()
 
     const dispatched = deferred()
     gateway.handlers.set(`POST ${searchPath}`, () => { dispatched.resolve() })

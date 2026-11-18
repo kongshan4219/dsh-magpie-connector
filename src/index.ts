@@ -37,7 +37,7 @@ export function apply(ctx: Context, config: Config = {}) {
   ctx.inject(['tools'], child => {
     const tools = child.get('tools')
     if (typeof tools?.resolve === 'function') child.effect(() => tools.register(createWebSearchTool(runtime), {
-      when: ({ modelSelection }) => isMagpieRoute(modelSelection.provider),
+      when: ({ modelSelection }) => isMagpieRoute(modelSelection.provider) && runtime.store.value.webSearch?.enabled !== false,
     }))
   })
   const dispose = createDisposer(runtime, [() => registrar.dispose()])

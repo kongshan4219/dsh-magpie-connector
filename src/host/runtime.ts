@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { credentialRef, type CredentialProvider, type CredentialRef } from '@deepseek-ai/dsh-credentials'
 import {
-  MAX_LINES, MAX_OWNERS, SettingsStore, isAccessMode, normalizeBaseUrl, validateLoadedLines, validateKnownOwners, validatePendingCredentials,
+  MAX_LINES, MAX_OWNERS, SettingsStore, isAccessMode, normalizeBaseUrl, validateLoadedLines, validateKnownOwners, validatePendingCredentials, webSearchOf,
   type AccessMode, type CredentialField, type LineSettings, type PendingCredential, type Settings,
 } from './settings.js'
 import { GatewayTransport, validateIdentity, type ConnectionIdentity } from './transport.js'
@@ -9,6 +9,7 @@ import { LineSelector, type Probe } from './selection.js'
 import { mapCatalog, routeOf, type CatalogModel } from './catalog.js'
 import type { PublishResult } from './registrar.js'
 import { DEFAULT_SIDEBAR_WINDOWS, migrateLegacySidebarWindow, normalizeSidebarWindows, type SidebarWindowKind } from '../shared/sidebar-window.js'
+import type { WebSearchSettings } from '../shared/web-search.js'
 
 /** Effective sidebar window selection: stored value, else the 0.6.7 legacy string, else the default. */
 export const sidebarWindowsOf = (value: Pick<Settings, 'sidebarWindows' | 'sidebarWindow'>): SidebarWindowKind[] | null =>
@@ -182,6 +183,7 @@ export class MagpieRuntime {
       ...(value.sidebarUsage === true ? { sidebarUsage: true } : {}),
       ...(typeof value.sidebarRefreshMinutes === 'number' ? { sidebarRefreshMinutes: value.sidebarRefreshMinutes } : {}),
       ...(storedWindows ? { sidebarWindows: storedWindows } : {}),
+      ...(value.webSearch ? { webSearch: webSearchOf(value.webSearch) } : {}),
       ...(this.owners.length ? { knownOwners: this.owners } : {}),
     }
     for (const [key, field] of Object.entries(patch)) {
@@ -605,12 +607,13 @@ export class MagpieRuntime {
       sidebarUsage: this.store.value.sidebarUsage === true,
       sidebarRefreshMinutes: this.store.value.sidebarRefreshMinutes ?? 5,
       sidebarWindows: sidebarWindowsOf(this.store.value) ?? [...DEFAULT_SIDEBAR_WINDOWS],
+      webSearch: webSearchOf(this.store.value.webSearch),
       knownOwnersReset: this.knownOwnersReset, ownerLimitReached: this.rejectedOwners.length > 0, rejectedOwners: this.rejectedOwners,
       ...(this.registrationError ? { routeRegistrationError: this.registrationError } : {}),
     }))
   }
   /** Preference-only writes also persist the single clean schema (drops legacy fields). */
-  savePreferences(patch: { visibleModels?: Record<string, string[]>; defaultEfforts?: Record<string, string>; sidebarUsage?: boolean; sidebarRefreshMinutes?: number; sidebarWindows?: SidebarWindowKind[] }) {
+  savePreferences(patch: { visibleModels?: Record<string, string[]>; defaultEfforts?: Record<string, string>; sidebarUsage?: boolean; sidebarRefreshMinutes?: number; sidebarWindows?: SidebarWindowKind[]; webSearch?: WebSearchSettings }) {
     const config = this.loadConfig()
     this.writeSettings({
       lines: config.lines,
@@ -619,6 +622,7 @@ export class MagpieRuntime {
       sidebarUsage: patch.sidebarUsage ?? this.store.value.sidebarUsage,
       sidebarRefreshMinutes: patch.sidebarRefreshMinutes ?? this.store.value.sidebarRefreshMinutes,
       sidebarWindows: patch.sidebarWindows ?? sidebarWindowsOf(this.store.value) ?? [...DEFAULT_SIDEBAR_WINDOWS],
+      ...(patch.webSearch ? { webSearch: patch.webSearch } : {}),
       credentialUpdatePending: this.failedFields.length ? this.failedFields : undefined,
     })
   }

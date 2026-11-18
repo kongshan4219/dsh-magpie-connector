@@ -7,6 +7,7 @@ import { UsageCard } from './UsageCard.js'
 import { t, type MagpieKey } from './locales.js'
 import { DEFAULT_REFRESH_MINUTES, MAX_REFRESH_MINUTES, setSidebarPreference } from './sidebar-preference.js'
 import { DEFAULT_SIDEBAR_WINDOWS, SIDEBAR_WINDOW_KINDS, normalizeSidebarWindows, type SidebarWindowKind } from '../shared/sidebar-window.js'
+import { DEFAULT_WEB_SEARCH, MAX_SEARCH_RESULTS, searchAdminLink, type WebSearchSettings } from '../shared/web-search.js'
 import {
   cacheIds, cardKey, checkDiff, checkSignature, formatTime, parseCards, parseCheck, parseResetOutcome, parseResetTicket, providerOrder, readTime, resetAccount, sameTarget,
   type Card, type CardsView, type CheckSnapshot, type ModelGroup, type ModelRow, type ResetTicket, type SettingsView, type SyncErrorKind,
@@ -295,6 +296,7 @@ export function MagpieSettings({ api }: { api: Api }) {
     settings ? h(Connection, { settings, saving: savingSettings, mutateSettings, api, latency, onRefreshLatency: (lineId: string) => { void readLatency(lineId) },
       usage: h(UsageStatus, { cards, busy, ...(noteScope === undefined ? { notice, alert: usageAlert } : {}), onFetchAll: () => { void fetchAll() }, saving: savingSettings }) })
       : settingsError ? null : h('p', { role: 'status', className: 'dmg-hint' }, t('readingSettings')),
+    settings ? h(WebSearchPreference, { settings, saving: savingSettings, mutateSettings }) : null,
     settings ? h(SidebarUsagePreference, { settings, saving: savingSettings, mutateSettings }) : null,
     ...providerOrder(groups, cardList).map(provider => h(ProviderGroup, {
       key: provider, provider,
@@ -793,11 +795,65 @@ function ModelLine({ model, visible, effort, disabled, onVisible, onEffort }: {
 const windowKindLabel = (kind: SidebarWindowKind): string =>
   kind === 'fiveHour' ? t('sidebarWindowFiveHour') : kind === 'weekly' ? t('sidebarWindowWeekly') : t('sidebarWindowMonthly')
 
-/**
- * The sidebar preference: one host-persisted flag. The host is the source of
- * truth; the module store is updated so the already-mounted sidebar card
- * follows the toggle without a reload.
- */
+function WebSearchPreference({ settings, saving, mutateSettings }: {
+  settings: SettingsView; saving: boolean; mutateSettings: SettingsMutation
+}) {
+  const { enabled, count, adminUrl } = settings.webSearch ?? DEFAULT_WEB_SEARCH
+  const [draft, setDraft] = useState(adminUrl)
+  const [failed, setFailed] = useState('')
+  useEffect(() => { setDraft(adminUrl) }, [adminUrl])
+  const activeBaseUrl = settings.lines?.find(line => line.id === settings.activeLineId)?.baseUrl
+  const href = searchAdminLink(adminUrl, activeBaseUrl)
+  const save = async (patch: Partial<WebSearchSettings>) => {
+    setFailed('')
+    const response = await mutateSettings({ webSearch: patch })
+    if (response?.error) setFailed(response.error)
+    if (response?.view && patch.adminUrl !== undefined) setDraft(response.view.webSearch?.adminUrl ?? '')
+  }
+  return h('section', { className: 'dmg-panel', 'data-web-search': '' },
+    h('h3', null, t('webSearchTitle')),
+    h('div', { className: 'dmg-switch-row' },
+      h('span', null, t('webSearchToggle')),
+      h('button', {
+        type: 'button', className: 'dmg-switch', role: 'switch', disabled: saving,
+        'aria-checked': enabled, 'aria-label': t('webSearchToggle'), 'data-web-search-switch': '',
+        onClick: () => { void save({ enabled: !enabled }) },
+      }, h('i', null)),
+    ),
+    h('p', { className: 'dmg-hint' }, t('webSearchHint')),
+    h('label', { className: 'dmg-head' },
+      h('span', null, t('webSearchCount')),
+      h('select', {
+        className: 'dmg-select', value: count ?? '', disabled: saving || !enabled, 'data-web-search-count': '',
+        onChange: (event: { target: { value: string } }) => { void save({ count: event.target.value ? Number(event.target.value) : null }) },
+      }, h('option', { value: '' }, t('webSearchGatewayDefault')),
+      ...Array.from({ length: MAX_SEARCH_RESULTS }, (_, i) => h('option', { key: i + 1, value: i + 1 }, i + 1))),
+    ),
+    h('div', { className: 'dmg-web-search-management' },
+      h('div', { className: 'dmg-head' },
+        h('h4', null, t('webSearchManagement')),
+        href ? h('a', { className: 'dmg-web-search-link', href, target: '_blank', rel: 'noopener noreferrer' }, t('webSearchOpenAdmin')) : null,
+      ),
+      h('p', { className: 'dmg-hint' }, t('webSearchManagementHint')),
+      h('div', { className: 'dmg-web-search-url' },
+        h('input', {
+          type: 'text', inputMode: 'url', className: 'dmg-input', value: draft, disabled: saving,
+          'aria-label': t('webSearchAdminUrl'), placeholder: t('webSearchAdminPlaceholder'), 'data-web-search-admin-url': '',
+          onChange: (event: { target: { value: string } }) => setDraft(event.target.value),
+          onKeyDown: (event: { key: string; preventDefault(): void }) => {
+            if (event.key === 'Enter' && !saving && draft !== adminUrl) { event.preventDefault(); void save({ adminUrl: draft }) }
+          },
+        }),
+        h('button', { type: 'button', className: 'dmg-button', disabled: saving || draft === adminUrl, 'data-web-search-save-url': '',
+          onClick: () => { void save({ adminUrl: draft }) },
+        }, t('save')),
+      ),
+    ),
+    failed ? h('p', { className: 'dmg-error', role: 'alert' }, failed) : null,
+  )
+}
+
+/** The host persists the preference and the module store updates the mounted sidebar. */
 function SidebarUsagePreference({ settings, saving, mutateSettings }: {
   settings: SettingsView; saving: boolean; mutateSettings: SettingsMutation
 }) {

@@ -6,6 +6,7 @@ import { ResetController } from './reset.js'
 import { SpeedController } from './speed.js'
 import { LatencyController } from './latency.js'
 import { normalizeSidebarWindows } from '../shared/sidebar-window.js'
+import { updateWebSearch } from './settings.js'
 export class SettingsController {
   private pending: Promise<void> = Promise.resolve()
   constructor(readonly runtime:MagpieRuntime) {}
@@ -19,7 +20,7 @@ export class SettingsController {
     const runtime=this.runtime
     if(body!==undefined) {
       try {
-        if(!body || typeof body!=='object' || Array.isArray(body) || Object.keys(body).some(k=>!['lines','resync','visibleModels','defaultEffort','sidebarUsage','sidebarRefreshMinutes','sidebarWindows'].includes(k))) throw new Error('Invalid settings')
+        if(!body || typeof body!=='object' || Array.isArray(body) || Object.keys(body).some(k=>!['lines','resync','visibleModels','defaultEffort','sidebarUsage','sidebarRefreshMinutes','sidebarWindows','webSearch'].includes(k))) throw new Error('Invalid settings')
         const input=body as Record<string,unknown>
         // Validate the entire union before credentials, disk writes or synchronization.
         if('lines' in input) { if(!Array.isArray(input.lines)) throw new Error('Invalid lines'); if(input.lines.length<1||input.lines.length>5) throw new Error('Invalid lines') }
@@ -32,11 +33,12 @@ export class SettingsController {
         const sidebarUsage='sidebarUsage' in input ? input.sidebarUsage as boolean : undefined
         const sidebarRefreshMinutes='sidebarRefreshMinutes' in input ? input.sidebarRefreshMinutes as number : undefined
         const sidebarWindows=normalizeSidebarWindows(input.sidebarWindows) ?? undefined
+        const webSearch = 'webSearch' in input ? updateWebSearch(input.webSearch, runtime.store.value.webSearch) : undefined
         const defaultEfforts='defaultEffort' in input ? updateDefaultEffort(runtime.store.value.defaultEfforts,input.defaultEffort,runtime.current.catalog) : undefined
         const connection=Object.fromEntries(Object.entries(input).filter(([k])=>['lines','resync'].includes(k)))
         if(Object.keys(connection).length) {const result=await runtime.settings(connection);if(!result.ok)return result}
-        if(visibleModels!==undefined || defaultEfforts!==undefined || sidebarUsage!==undefined || sidebarRefreshMinutes!==undefined || sidebarWindows!==undefined) {
-          runtime.savePreferences({ ...(visibleModels===undefined?{}:{visibleModels}), ...(defaultEfforts===undefined?{}:{defaultEfforts}), ...(sidebarUsage===undefined?{}:{sidebarUsage}), ...(sidebarRefreshMinutes===undefined?{}:{sidebarRefreshMinutes}), ...(sidebarWindows===undefined?{}:{sidebarWindows}) })
+        if(visibleModels!==undefined || defaultEfforts!==undefined || sidebarUsage!==undefined || sidebarRefreshMinutes!==undefined || sidebarWindows!==undefined || webSearch!==undefined) {
+          runtime.savePreferences({ ...(visibleModels===undefined?{}:{visibleModels}), ...(defaultEfforts===undefined?{}:{defaultEfforts}), ...(sidebarUsage===undefined?{}:{sidebarUsage}), ...(sidebarRefreshMinutes===undefined?{}:{sidebarRefreshMinutes}), ...(sidebarWindows===undefined?{}:{sidebarWindows}), ...(webSearch===undefined?{}:{webSearch}) })
           if(visibleModels!==undefined || defaultEfforts!==undefined) runtime.publish()
         }
       } catch(error) {return Response.json({error:runtime.redact(error instanceof Error?error.message:String(error))},{status:400})}
